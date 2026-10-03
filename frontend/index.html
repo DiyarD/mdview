@@ -1,0 +1,1147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mdview</title>
+<style>__MDVIEW_HLJS_LIGHT_CSS__</style>
+<style>__MDVIEW_HLJS_DARK_CSS__</style>
+<style>
+  /* Warm editorial minimalism: paper, ink, clay + sage. Calm, academic,
+     never corporate. Dark side is "warm charcoal library", not inverted gray. */
+  :root{
+    --font-scale:1.0;
+    --read-width:860px;
+    --bar-h:40px;
+    --bg:#faf7f1; --fg:#2c2620; --bar:#f2ede2; --border:#e2d8c3; --accent:#2f6f6a;
+    --accent-strong:#2c5f5b; --accent-soft:#e2e8da; --link-ul:rgba(47,111,106,.38);
+    --drop:#f4efe3; --card:#fffdf8;
+    --pre-bg:#f1ebdd; --code-bg:rgba(122,96,58,.13); --quote:#776a52; --quote-bar:#cfc09e;
+    --tbl-alt:#f4efe2; --tbl-head-line:#c9bb9c;
+    --tbl-hover:#e9dfc6;
+    --shadow:0 1px 2px rgba(74,60,38,.07),0 6px 18px rgba(74,60,38,.05);
+    --mono:ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,monospace;
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,Cambria,"Times New Roman",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{ --bg:#1a1512; --fg:#e9e1d3; --bar:#221c16; --border:#3a3227; --accent:#d0a468;
+      --accent-strong:#c8a06a; --accent-soft:rgba(200,160,106,.16); --link-ul:rgba(208,164,104,.45);
+      --drop:#201a14; --card:#241e17;
+      --pre-bg:#231d16; --code-bg:rgba(200,160,106,.13); --quote:#a5977d; --quote-bar:#4d4332;
+      --tbl-alt:#201a14; --tbl-head-line:#57493a; --tbl-hover:#2c251c;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.3); }
+  }
+  html.dark{ --bg:#1a1512; --fg:#e9e1d3; --bar:#221c16; --border:#3a3227; --accent:#d0a468;
+    --accent-strong:#c8a06a; --accent-soft:rgba(200,160,106,.16); --link-ul:rgba(208,164,104,.45);
+    --drop:#201a14; --card:#241e17;
+    --pre-bg:#231d16; --code-bg:rgba(200,160,106,.13); --quote:#a5977d; --quote-bar:#4d4332;
+    --tbl-alt:#201a14; --tbl-head-line:#57493a; --tbl-hover:#2c251c;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.3); color-scheme:dark; }
+  html.light{ --bg:#faf7f1; --fg:#2c2620; --bar:#f2ede2; --border:#e2d8c3; --accent:#2f6f6a;
+    --accent-strong:#2c5f5b; --accent-soft:#e2e8da; --link-ul:rgba(47,111,106,.38);
+    --drop:#f4efe3; --card:#fffdf8;
+    --pre-bg:#f1ebdd; --code-bg:rgba(122,96,58,.13); --quote:#776a52; --quote-bar:#cfc09e;
+    --tbl-alt:#f4efe2; --tbl-head-line:#c9bb9c;
+    --tbl-hover:#e9dfc6;
+    --shadow:0 1px 2px rgba(74,60,38,.07),0 6px 18px rgba(74,60,38,.05);
+    color-scheme:light; }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{ margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 var(--sans); overflow:hidden;
+    -webkit-font-smoothing:antialiased; display:flex; flex-direction:column; }
+  ::selection{ background:var(--accent-soft); }
+  button:focus-visible,.drop:focus-visible,input:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  #bar{ height:var(--bar-h); display:flex; align-items:center; gap:6px; padding:0 10px; flex:none;
+    background:var(--bar); border-bottom:1px solid var(--border); user-select:none; }
+  #tabs{ display:flex; align-items:center; gap:4px; flex:1; overflow-x:auto; scrollbar-width:thin; }
+  .tab{ display:flex; align-items:center; gap:6px; max-width:220px; padding:5px 6px 5px 11px; border:1px solid transparent;
+    border-radius:8px; cursor:pointer; white-space:nowrap; font-size:12.5px; transition:background .15s,border-color .15s; }
+  .tab:hover{ background:rgba(122,96,58,.1); }
+  .tab.active{ background:var(--card); border-color:var(--border); box-shadow:var(--shadow); }
+  .tab .t{ overflow:hidden; text-overflow:ellipsis; }
+  .tab .x{ border:0; background:transparent; color:var(--quote); cursor:pointer; border-radius:6px; padding:0 5px; font-size:13px; line-height:1.4; }
+  .tab .x:hover{ background:rgba(122,96,58,.16); color:inherit; }
+  #newtab{ border:1px solid var(--border); background:transparent; color:inherit; border-radius:8px; cursor:pointer; padding:3px 9px; font-size:14px; transition:background .15s; }
+  #newtab:hover{ background:rgba(122,96,58,.12); }
+  .ctl{ border:1px solid transparent; background:transparent; color:inherit; border-radius:8px; cursor:pointer;
+    padding:4px 7px; font-size:12.5px; white-space:nowrap; transition:background .15s,border-color .15s; }
+  .ctl:hover{ background:rgba(122,96,58,.12); border-color:var(--border); }
+  .ctl:active,.btn:active,#newtab:active{ transform:scale(.93); }
+  #width{ width:90px; accent-color:var(--accent); opacity:.55; }
+  #width:hover{ opacity:1; }
+  #views{ position:relative; flex:1 1 0%; min-height:0; }
+  .view{ position:absolute; inset:0; display:none; overflow-y:auto; }
+  .view.active{ display:block; }
+  .page{ max-width:var(--read-width); margin:0 auto; padding:40px 36px 96px; transition:max-width .15s ease; }
+  /* Markdown body: editorial serif prose. Personality lives in type, rhythm
+     and hairlines — never in loud color. */
+  .markdown-body{ background:transparent !important; color:var(--fg); font-family:var(--serif);
+    font-size:calc(16.5px * var(--font-scale)); line-height:1.68; word-wrap:break-word; }
+  .markdown-body>*:first-child{ margin-top:0 !important; }
+  .markdown-body>*:last-child{ margin-bottom:0 !important; }
+  .markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6{
+    margin:1.6em 0 .7em; font-weight:600; line-height:1.22; letter-spacing:-.012em; text-wrap:balance; }
+  .markdown-body h1{ font-size:2em; padding-bottom:.35em; border-bottom:1px solid var(--border); }
+  .markdown-body h2{ font-size:1.5em; padding-bottom:.3em; border-bottom:1px solid var(--border); }
+  .markdown-body h3{ font-size:1.22em; }
+  .markdown-body h4{ font-size:1em; }
+  .markdown-body h5{ font-size:.88em; letter-spacing:.02em; }
+  .markdown-body h6{ font-size:.85em; color:var(--quote); letter-spacing:.04em; }
+  .markdown-body p{ margin:0 0 1.05em; }
+  .markdown-body a{ color:var(--accent); text-decoration:underline; text-decoration-color:var(--link-ul);
+    text-decoration-thickness:1px; text-underline-offset:3px; transition:background .15s; border-radius:3px; }
+  .markdown-body a:hover{ text-decoration-color:var(--accent); background:var(--accent-soft); }
+  .markdown-body strong{ font-weight:700; }
+  .markdown-body hr{ height:1px; margin:2.6em auto; background:var(--border); border:0; }
+  .markdown-body blockquote{ margin:0 0 1.4em; padding:.2em 0 .2em 1.1em; color:var(--quote);
+    font-style:italic; font-size:1.05em; line-height:1.6; border-left:2px solid var(--quote-bar); }
+  .markdown-body blockquote p{ margin:0 0 .6em; }
+  .markdown-body ul,.markdown-body ol{ margin:0 0 1.05em; padding-left:1.7em; }
+  .markdown-body li+li{ margin-top:.3em; }
+  .markdown-body li::marker{ color:var(--quote); }
+  .markdown-body ul.contains-task-list{ list-style:none; padding-left:0; }
+  .markdown-body input[type=checkbox]{ margin-right:.5em; accent-color:var(--accent); }
+  .markdown-body code{ font-family:var(--mono); font-size:.84em; background:var(--code-bg); padding:.18em .42em; border-radius:5px; }
+  .markdown-body pre{ font-family:var(--mono); font-size:84%; line-height:1.55; background:var(--pre-bg);
+    border:1px solid var(--border); box-shadow:var(--shadow); padding:18px 20px; border-radius:10px;
+    overflow:auto; margin:0 0 1.4em; }
+  .markdown-body pre code{ background:transparent; padding:0; font-size:100%; }
+  /* hljs theme spans: never let theme background fight our own surfaces */
+  .markdown-body pre code.hljs{ background:transparent !important; }
+  /* Muted editorial code palette (overrides vendored GitHub colors) */
+  .markdown-body .hljs-keyword,.markdown-body .hljs-selector-tag,.markdown-body .hljs-doctag,
+  .markdown-body .hljs-template-tag,.markdown-body .hljs-type{ color:#9a5b2e; }
+  .markdown-body .hljs-string,.markdown-body .hljs-regexp,.markdown-body .hljs-meta .hljs-string{ color:#4e7a52; }
+  .markdown-body .hljs-number,.markdown-body .hljs-literal,.markdown-body .hljs-attr,
+  .markdown-body .hljs-operator,.markdown-body .hljs-variable,.markdown-body .hljs-template-variable{ color:#8a6414; }
+  .markdown-body .hljs-comment,.markdown-body .hljs-quote,.markdown-body .hljs-formula{ color:#9c8f74; font-style:italic; }
+  .markdown-body .hljs-title,.markdown-body .hljs-title.function_,.markdown-body .hljs-section{ color:#3f5a78; }
+  .markdown-body .hljs-built_in,.markdown-body .hljs-symbol,.markdown-body .hljs-name{ color:#7a5c48; }
+  html.dark .markdown-body .hljs-keyword,html.dark .markdown-body .hljs-selector-tag,
+  html.dark .markdown-body .hljs-doctag,html.dark .markdown-body .hljs-template-tag,
+  html.dark .markdown-body .hljs-type{ color:#d69a63; }
+  html.dark .markdown-body .hljs-string,html.dark .markdown-body .hljs-regexp,
+  html.dark .markdown-body .hljs-meta .hljs-string{ color:#a4c08a; }
+  html.dark .markdown-body .hljs-number,html.dark .markdown-body .hljs-literal,
+  html.dark .markdown-body .hljs-attr,html.dark .markdown-body .hljs-operator,
+  html.dark .markdown-body .hljs-variable,html.dark .markdown-body .hljs-template-variable{ color:#d9b36a; }
+  html.dark .markdown-body .hljs-comment,html.dark .markdown-body .hljs-quote,
+  html.dark .markdown-body .hljs-formula{ color:#8f8069; font-style:italic; }
+  html.dark .markdown-body .hljs-title,html.dark .markdown-body .hljs-title.function_,
+  html.dark .markdown-body .hljs-section{ color:#a9c0d4; }
+  html.dark .markdown-body .hljs-built_in,html.dark .markdown-body .hljs-symbol,
+  html.dark .markdown-body .hljs-name{ color:#c09a72; }
+  /* Editorial tables: hairline frame, micro-header, tabular numerals, no grid.
+     Every table arrives wrapped in .tw (done by the Rust renderer), and .tw is
+     the scroll container. That containment is the whole trick: a sticky element
+     resolves against its NEAREST scrollport, so because .tw scrolls, the header
+     sticks to .tw and survives the page scrolling underneath it. Letting the page
+     scroll the table instead (no wrapper) also pins, but then a wide table has
+     nowhere to scroll and drags the whole reading column sideways.
+     max-height is what gives the wrapper a vertical scroll range to pin against;
+     without it a tall table just runs off the page under a header glued to it.
+     The cap is generous and measured against the viewport rather than a row
+     count — a wide table wraps its cells, so ten rows of a ten-column table can
+     be as tall as fifty of a narrow one, and a row-count cap would trap those in
+     a pointless little scroller. Ordinary tables stay one unbroken block. */
+  /* width:max-content makes the frame hug the table instead of boxing in the
+     whole column, and auto margins centre it. max-width:100% still clamps a
+     table wider than the column, so that case degrades to a full-width frame
+     with the table scrolling inside it. */
+  .tw{ width:max-content; max-width:100%; margin:0 auto 1.4em;
+    border:1px solid var(--border); border-radius:10px; background:var(--card);
+    overflow:auto; max-height:min(85vh, 1200px); }
+  .markdown-body table{ width:max-content; margin:0;
+    border-collapse:separate; border-spacing:0;
+    font-family:var(--sans); font-size:.86em; font-variant-numeric:tabular-nums; }
+  /* A table wider than the column scrolls inside .tw; one that fits is centred
+     by the auto side margins above and never shows a scrollbar.
+
+     max-width caps a CELL's ideal width, which is the actual cause of runaway
+     tables: a cell holding a full sentence wants the whole sentence on one
+     line, and the table's ideal width is the sum of those, so a three-column
+     clinical table renders ~3300px wide and the reader spends their time
+     scrolling sideways instead of reading. Capping the cell makes the text
+     wrap at word boundaries within a readable measure, and columns keep their
+     natural relative widths — a narrow column like "Line" stays narrow, because
+     max-width only bounds the maximum, it does not equalise columns the way
+     table-layout:fixed would. Measured on the CANMAT guide (45 tables): 36ch
+     takes document-wide horizontal scrolling from 38 tables down to 10 and
+     brings table 2.6 from 3279px to 783px, which fits the column outright.
+     break-word is the safety net for a cell holding one unbreakable token
+     (a URL, an identifier), which would otherwise spill past the cap. */
+  .markdown-body table th,.markdown-body table td{ padding:9px 16px; border:0;
+    border-bottom:1px solid var(--border); text-align:left; vertical-align:top;
+    max-width:36ch; overflow-wrap:break-word; }
+  /* The last row carries no rule: .tw's own frame is the outer edge, which is
+     what makes the table read as a bordered object instead of loose lines. */
+  .markdown-body table tbody tr:last-child td{ border-bottom:0; }
+  .markdown-body table thead th{ font-weight:600; font-size:.8em; letter-spacing:.07em;
+    text-transform:uppercase; color:var(--quote);
+    border-bottom:1px solid var(--tbl-head-line);
+    position:sticky; top:0; z-index:2; background:var(--card); }
+  .markdown-body table tr{ background:transparent; }
+  .markdown-body table tbody tr:nth-child(2n){ background:var(--tbl-alt); }
+  /* Row hover is a whisper of deeper paper, never a hue shift: readable on
+     both plain and zebra rows, in both themes. */
+  .markdown-body table tbody tr:hover{ background:var(--tbl-hover); }
+  /* A display equation wider than the column would otherwise widen the whole
+     reading pane and make the page scroll sideways, which also throws off the
+     centring of everything else in the column. Give it its own scroll box so
+     the column holds its width; on paper it is unrolled instead (see @media
+     print), since a printed page cannot be scrolled either. */
+  .markdown-body .math-display{ display:block; overflow-x:auto; }
+  .markdown-body img{ max-width:100%; border-radius:8px; }
+  .markdown-body video{ max-width:100%; border-radius:8px; background:#000; }
+  .markdown-body audio{ max-width:100%; }
+  .markdown-body kbd{ font-family:var(--mono); font-size:11px; background:var(--pre-bg); border:1px solid var(--border); border-bottom-width:2px; border-radius:6px; padding:2px 5px; }
+  .empty{ min-height:60vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .drop{ width:100%; max-width:580px; border:1px dashed var(--quote-bar); border-radius:16px; background:var(--card);
+    box-shadow:var(--shadow); padding:44px 36px; text-align:center; outline:none; transition:border-color .15s, box-shadow .15s; }
+  .drop.over{ border-color:var(--accent); box-shadow:var(--shadow),0 0 0 3px var(--accent-soft); }
+  .drop h1{ font-family:var(--serif); font-size:22px; margin:0 0 8px; font-weight:600; letter-spacing:-.01em; }
+  .drop p{ margin:8px 0; color:var(--quote); font-size:13.5px; }
+  .drop kbd{ border:1px solid var(--border); border-bottom-width:2px; border-radius:6px; padding:1px 7px;
+    font:12px var(--mono); background:var(--bg); }
+  .row{ display:flex; gap:10px; justify-content:center; margin-top:20px; }
+  .btn{ border:1px solid var(--border); background:var(--card); color:inherit; border-radius:9px; padding:8px 16px;
+    cursor:pointer; font-size:13px; font-family:var(--sans); transition:background .15s,border-color .15s,box-shadow .15s; }
+  .btn:hover{ border-color:var(--quote-bar); box-shadow:var(--shadow); }
+  .btn.primary{ background:var(--accent-strong); border-color:var(--accent-strong); color:#fff; }
+  html.dark .btn.primary{ color:#1a1512; }
+  .hint{ margin-top:16px; font-size:12px; color:var(--quote); }
+  .err{ max-width:var(--read-width); margin:0 auto 14px; padding:11px 16px; border:1px solid #c1544a; border-radius:10px;
+    background:rgba(193,84,74,.08); font-size:13px; font-family:var(--sans); display:none; }
+  pre.mermaid{ background:transparent; border:0; box-shadow:none; }
+  .mermaid svg{ max-width:100%; height:auto; }
+  /* Floating contents pill: quiet by design. It only appears when a doc
+     earns it (>=2 headings and a scrollable page): a progress ring plus the
+     current section, expanding upward into the section list on click.
+     Hovering the closed pill reveals dock arrows; the pill glides to either
+     side (or back to center) on a soft ease. */
+  #toc{ position:fixed; left:0; right:0; bottom:16px; display:flex; justify-content:center;
+    pointer-events:none; z-index:60; }
+  #toc[hidden]{ display:none !important; }
+  #tocBox{ position:relative; pointer-events:auto;
+    transition:transform .38s cubic-bezier(.22,1,.36,1); }
+  /* Docking is pure CSS so it stays smooth at any viewport width or label
+     length: shift the centered box by half the viewport, less half its own
+     width, leaving a 16px margin. */
+  #tocBox.pos-left{ transform:translateX(calc(-50vw + 50% + 16px)); }
+  #tocBox.pos-right{ transform:translateX(calc(50vw - 50% - 16px)); }
+  #tocPill{ display:flex; align-items:center; gap:8px; padding:6px 14px 6px 7px;
+    border:1px solid var(--border); border-radius:999px; cursor:pointer;
+    background:color-mix(in srgb, var(--card) 84%, transparent);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+    box-shadow:var(--shadow); color:var(--fg); font:500 12.5px/1 var(--sans);
+    max-width:min(62vw,440px); transition:border-color .18s, box-shadow .18s; }
+  #tocPill:hover{ border-color:var(--quote-bar); }
+  #tocRing{ width:17px; height:17px; flex:none; transform:rotate(-90deg); }
+  #tocRing .toc-track{ fill:none; stroke:var(--border); stroke-width:2.5; }
+  #tocRing .toc-arc{ fill:none; stroke:var(--accent); stroke-width:2.5; stroke-linecap:round; }
+  #tocLabel{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #tocMenu{ position:absolute; bottom:calc(100% + 8px); left:50%; width:max-content;
+    min-width:220px; max-width:min(82vw,380px); max-height:38vh; overflow-y:auto;
+    background:color-mix(in srgb, var(--card) 93%, transparent);
+    -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px);
+    border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow);
+    padding:6px; opacity:0; pointer-events:none;
+    transform:translateX(-50%) translateY(6px) scale(.98); transform-origin:bottom center;
+    transition:opacity .2s ease, transform .2s ease; }
+  #tocBox.open #tocMenu{ opacity:1; pointer-events:auto; transform:translateX(-50%) translateY(0) scale(1); }
+  /* Docked pills anchor the menu to their own edge so it never leaves screen. */
+  #tocBox.pos-left #tocMenu{ left:0; transform-origin:bottom left;
+    transform:translateY(6px) scale(.98); }
+  #tocBox.pos-left.open #tocMenu{ transform:translateY(0) scale(1); }
+  #tocBox.pos-right #tocMenu{ left:auto; right:0; transform-origin:bottom right;
+    transform:translateY(6px) scale(.98); }
+  #tocBox.pos-right.open #tocMenu{ transform:translateY(0) scale(1); }
+  /* Dock arrows: bare chevrons, invisible until the closed pill is hovered
+     (or focused). No circle, no chrome — the mark alone is enough.
+     The ::after hitbox bridges the gap to the pill (plus vertical slack) so
+     the cursor never "falls off" hover mid-approach; the hide delay adds a
+     grace period on top. No more chasing a vanishing arrow. */
+  .dock{ position:absolute; top:50%; translate:0 -50%; padding:6px;
+    border:0; background:transparent; cursor:pointer; color:var(--quote);
+    opacity:0; transition:opacity .18s ease .3s, color .15s; }
+  .dock::after{ content:""; position:absolute; inset:-10px -9px; }
+  .dock svg{ display:block; width:7px; height:11px; fill:none; stroke:currentColor;
+    stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+  .dock:hover{ color:var(--fg); }
+  .dock.l{ left:-26px; } .dock.r{ right:-26px; }
+  #tocBox:not(.open):hover .dock, .dock:focus-visible{ opacity:.75; transition-delay:0s; }
+  #tocBox.open .dock{ opacity:0 !important; pointer-events:none; }
+  #tocBox.pos-left .dock.l, #tocBox.pos-right .dock.r{ display:none; }
+  #tocList{ list-style:none; margin:0; padding:0; }
+  #tocList button{ display:flex; align-items:center; gap:9px; width:100%; border:0; background:transparent;
+    color:var(--quote); font:500 12.5px/1.35 var(--sans); text-align:left; cursor:pointer;
+    border-radius:9px; padding:7px 10px; }
+  #tocList button:hover{ color:var(--fg); background:var(--accent-soft); }
+  #tocList button.on{ color:var(--fg); background:var(--accent-soft); }
+  #tocList .dot{ flex:none; width:5px; height:5px; border-radius:50%; background:var(--quote-bar); }
+  #tocList button.on .dot{ background:var(--accent); }
+  #tocList .t{ white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  @media (prefers-reduced-motion: reduce){ #tocBox,#tocMenu,#tocPill{ transition:none; } }
+  /* Section jumps land just below the chrome with a breath of space. */
+  .markdown-body h1,.markdown-body h2,.markdown-body h3,
+  .markdown-body h4,.markdown-body h5,.markdown-body h6{ scroll-margin-top:10px; }
+  ::-webkit-scrollbar{ width:10px; height:10px; } ::-webkit-scrollbar-thumb{ background:rgba(122,96,58,.32); border-radius:8px; border:2px solid transparent; background-clip:content-box; }
+  /* Printing: the reading views are independent scrollers, so without this the
+     printer only sees the viewport (one clipped "page"). Unwrap everything
+     and hide the chrome. Print follows the app theme — warm paper in light
+     mode, warm charcoal in dark — so the preview matches the app and
+     "Save as PDF" preserves it.
+
+     Real @page margins, AND a background on the @page box itself. The margin
+     box belongs to no element, so html/body backgrounds stop at the content
+     edge and a non-zero margin leaves a ring of unpainted canvas around it —
+     white with background graphics off, near-black with them on. Both were
+     confirmed by sampling rendered PDF pixels, not assumed. Painting the @page
+     box is the only thing that fills that ring, and var(--bg) keeps it in step
+     with the theme. Verified in real PDF pixels: margin and content sample
+     identically in both light and dark.
+
+     print-color-adjust is deliberately NOT forced to exact: forcing it
+     overrides the reader's own "Background graphics" choice. With it off the
+     whole sheet prints unshaded, which is what turning the option off means. */
+  @page{ margin:16mm 14mm 18mm; background:var(--bg); }
+  @media print{
+    :root{ --shadow:none; }
+    html,body{ height:auto; }
+    html{ background:var(--bg); }
+    body{ overflow:visible; background:var(--bg); }
+    #bar,#toc{ display:none !important; }
+    #views{ height:auto; }
+    .view{ position:static; overflow:visible; }
+    /* The reading margins live in @page now, so .page contributes none —
+       padding here would only ever inset page 1 and pull the rest wide. */
+    .page{ max-width:100%; margin:0; padding:0; }
+    .markdown-body{ font-size:11pt; }
+    .markdown-body pre{ box-shadow:none; }
+    .markdown-body a{ color:inherit; text-decoration:none; }
+
+    /* Pagination. A table of any real length cannot be kept whole on one sheet,
+       and asking for it anyway (`break-inside:avoid` on the table) is what
+       produced sheets carrying a lone header and one row. So: let the table
+       break, keep each ROW whole, and repeat the header on every sheet it
+       spans, which is what a long table is supposed to look like on paper. */
+    .markdown-body{ orphans:3; widows:3; }
+    .markdown-body p,.markdown-body li{ orphans:3; widows:3; }
+    .markdown-body h1,.markdown-body h2,.markdown-body h3,
+    .markdown-body h4,.markdown-body h5,.markdown-body h6{ break-after:avoid; break-inside:avoid; }
+    .markdown-body img,.markdown-body video,.markdown-body .mermaid,
+    .markdown-body pre,.markdown-body blockquote,.markdown-body .katex-display{ break-inside:avoid; }
+    .markdown-body table{ break-inside:auto; }
+    .markdown-body tr{ break-inside:avoid; }
+    .markdown-body thead{ display:table-header-group; }
+    .markdown-body tfoot{ display:table-footer-group; }
+    .markdown-body hr{ break-after:avoid; }
+
+    /* Paper cannot scroll. A capped .tw would print as a window onto a clipped
+       table with a scrollbar drawn on it, and the sticky header would be
+       positioned against that box rather than the sheet — so undo both and let
+       the table reflow to the full width of the paper. */
+    .tw{ max-height:none; overflow:visible; }
+    /* Selector must match the screen rule's specificity (class + 3 types) or
+       the sticky positioning survives into print, where it is positioned
+       against the sheet and can repeat or leave a gap at a break. */
+    .markdown-body table thead th{ position:static; }
+    .tw>table{ width:auto; max-width:100%; }
+    /* The screen cell cap is dropped for paper: a sheet is much narrower than
+       the reading column, so keeping 36ch per cell would push the table past
+       the page edge with nothing to scroll it. Cells take the full measure
+       and wrap at words instead. break-word still guards long tokens. */
+    .tw>table th,.tw>table td{ max-width:none; overflow-wrap:break-word; }
+    /* Paper cannot scroll: let a wide equation use the full measure rather than
+       being sliced at the page edge. */
+    .markdown-body .math-display{ overflow:visible; }
+
+    /* A diagram's node fills are its content, not page chrome: green/amber/red
+       carry the meaning, and the label ink we computed is only legible against
+       the fill it was derived from. So keep the fills when "Background graphics"
+       is off - otherwise the coding vanishes AND theme-filled nodes end up as
+       light text on white paper. Scoped to the SVG, so page shading (cards,
+       quote bars, code blocks) still honours the reader's choice. */
+    .markdown-body .mermaid svg{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+  }
+</style>
+</head>
+<body>
+<div id="bar">
+  <div id="tabs"></div>
+  <button id="newtab" title="New tab (Ctrl+T)">+</button>
+  <button class="ctl" id="zin" title="Zoom in (Ctrl+=)">A+</button>
+  <button class="ctl" id="zout" title="Zoom out (Ctrl+-)">A−</button>
+  <button class="ctl" id="fs" title="Fullscreen (F11)">⛶</button>
+  <input id="width" type="range" min="620" max="1180" step="10" value="860" title="Reading width — also [ / ] or Alt+Left/Right">
+  <button class="ctl" id="theme" title="Toggle light/dark">◐</button>
+</div>
+<div id="views"></div>
+<div id="toc" hidden>
+  <div id="tocBox">
+    <button class="dock l" id="tocLeft" aria-label="Move contents pill left"><svg viewBox="0 0 8 12" aria-hidden="true"><path d="M7 1.5 2.5 6 7 10.5"/></svg></button>
+    <div id="tocMenu"><ul id="tocList"></ul></div>
+    <button id="tocPill" aria-expanded="false" aria-haspopup="true" title="Table of contents">
+      <svg id="tocRing" viewBox="0 0 20 20" aria-hidden="true">
+        <circle class="toc-track" cx="10" cy="10" r="8"/>
+        <circle class="toc-arc" id="tocArc" cx="10" cy="10" r="8"/>
+      </svg>
+      <span id="tocLabel"></span>
+    </button>
+    <button class="dock r" id="tocRight" aria-label="Move contents pill right"><svg viewBox="0 0 8 12" aria-hidden="true"><path d="M1 1.5 5.5 6 1 10.5"/></svg></button>
+  </div>
+</div>
+
+<script>__MDVIEW_HLJS_JS__</script>
+<script>
+"use strict";
+window.__MDVIEW_INITIAL__ = __MDVIEW_INITIAL_JSON__;
+window.__MDVIEW_PREFS__ = __MDVIEW_PREFS_JSON__;
+// Rust serves the app's own vendored assets over the custom protocol (the
+// view has an opaque origin, so nothing resolves relatively).
+const MDVIEW_ASSET = "http://mdview.localhost/asset/";
+
+const $ = s => document.querySelector(s);
+const tabsEl = $("#tabs"), viewsEl = $("#views");
+let tabs = [], activeId = 0, seq = 0, reqSeq = 0;
+const pending = new Map(); // reqId -> {resolve,reject,kind,tabId}
+let fontScale = 1.0, readWidth = 860, darkMode = null;
+
+/* ---------- persisted prefs (zoom, width, theme survive restarts) ---------- */
+const PREFS_KEY = "mdview:prefs:v1";
+let saveT = null;
+function savePrefs(){
+  const p = { theme: darkMode?"dark":"light", fontScale, readWidth, tocPos: toc.pos };
+  // localStorage works when opened as a file; ignored (throws) on the
+  // opaque with_html origin — the Rust file below is the real store.
+  try{ localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }catch(e){}
+  if(!useIpc()) return;
+  clearTimeout(saveT);
+  saveT = setTimeout(()=>{ rust("save_prefs", p).catch(()=>{}); }, 250);
+}
+function applyPrefsObject(p){
+  if(!p || typeof p !== "object") return false;
+  let touched = false;
+  if(p.theme==="dark"){ darkMode = true; touched = true; }
+  else if(p.theme==="light"){ darkMode = false; touched = true; }
+  if(typeof p.fontScale==="number" && p.fontScale>=0.6 && p.fontScale<=2.2){ fontScale = p.fontScale; touched = true; }
+  if(typeof p.readWidth==="number" && p.readWidth>=620 && p.readWidth<=1180){ readWidth = p.readWidth; touched = true; }
+  if(p.tocPos==="left"||p.tocPos==="right"||p.tocPos==="center"){ setTocPos(p.tocPos); touched = true; }
+  return touched;
+}
+function loadPrefs(){
+  // Rust-owned file first (authoritative when present).
+  const fromRust = applyPrefsObject(window.__MDVIEW_PREFS__);
+  if(!fromRust){
+    try{ applyPrefsObject(JSON.parse(localStorage.getItem(PREFS_KEY)||"null")); }catch(e){}
+  }
+  if(darkMode===null) darkMode = matchMedia("(prefers-color-scheme: dark)").matches;
+}
+function isDark(){ return document.documentElement.classList.contains("dark"); }
+
+function useIpc(){ return !!(window.ipc && window.ipc.postMessage); }
+function rust(cmd, payload){
+  return new Promise((resolve,reject)=>{
+    if(!useIpc()){ reject(new Error("no-rust-ipc")); return; }
+    const id = "r"+(++reqSeq);
+    pending.set(id,{resolve,reject,cmd});
+    window.ipc.postMessage(JSON.stringify(Object.assign({cmd,id},payload)));
+  });
+}
+window.__mdview_ipc_result = function(id, ok, data){
+  const p = pending.get(id); if(!p) return; pending.delete(id);
+  ok ? p.resolve(data) : p.reject(new Error(String(data||"error")));
+};
+
+function esc(s){ return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+function titleOf(md, fallback){
+  if(fallback) return fallback;
+  const m = String(md||"").match(/^#{1,3}\s+(.+)$/m);
+  if(m) return m[1].slice(0,42);
+  const line = String(md||"").split("\n").map(s=>s.trim()).find(s=>s.length>2);
+  return (line||"untitled").slice(0,32);
+}
+
+/* ---------- tabs ---------- */
+function newTab(initialMd, initialName, base){
+  const id = ++seq;
+  const t = { id, md:"", name: initialName||("tab "+id), rendered:false, dirty:false, base:base||"" };
+  tabs.push(t);
+  const v = document.createElement("div");
+  v.className = "view"; v.id = "view-"+id;
+  v.innerHTML = '<div class="err"></div><div class="page"><div class="empty"><div class="drop" tabindex="0">'
+    + '<h1>Paste anything — <kbd>Ctrl</kbd>+<kbd>V</kbd></h1>'
+    + '<p>markdown text &nbsp;•&nbsp; a copied <b>.md file</b> &nbsp;•&nbsp; a <b>file path</b> &nbsp;•&nbsp; a <b>URL</b></p>'
+    + '<div class="row"><button class="btn primary" data-act="paste">Paste now</button>'
+    + '<button class="btn" data-act="browse">Browse files…</button></div>'
+    + '<p class="hint">or drag &amp; drop files or folders anywhere • <kbd>Ctrl</kbd>+<kbd>T</kbd> new tab • <kbd>Ctrl</kbd>+<kbd>W</kbd> close</p>'
+    + '</div></div></div>';
+  viewsEl.appendChild(v);
+  v.querySelector('[data-act="browse"]').onclick = ()=> pickFileDialog(t);
+  v.querySelector('[data-act="paste"]').onclick = async ()=>{
+    v.querySelector(".drop").focus();
+    try{ await pasteFromClipboard(t); }
+    catch(e){ showErr(t, "Clipboard read blocked — press Ctrl+V inside this window."); }
+  };
+  paintTabs(); switchTab(id);
+  if(typeof initialMd === "string" && initialMd.length) setMarkdown(t, initialMd, initialName);
+  else setTimeout(()=>{ const d=v.querySelector(".drop"); if(d && tabs.find(x=>x.id===id) && !t.rendered) d.focus({preventScroll:true}); },30);
+  return t;
+}
+function paintTabs(){
+  tabsEl.innerHTML = "";
+  for(const t of tabs){
+    const d = document.createElement("div");
+    d.className = "tab"+(t.id===activeId?" active":"");
+    d.title = t.name;
+    const s = document.createElement("span"); s.className="t"; s.textContent = t.name; d.appendChild(s);
+    const x = document.createElement("button"); x.className="x"; x.textContent="×"; x.title="Close (Ctrl+W)";
+    x.onclick = e=>{ e.stopPropagation(); closeTab(t.id); };
+    d.appendChild(x);
+    d.onclick = ()=> switchTab(t.id);
+    tabsEl.appendChild(d);
+  }
+}
+function switchTab(id){
+  activeId = id;
+  document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active", v.id==="view-"+id));
+  const t = tabs.find(x=>x.id===id);
+  if(t && t.dirty && t.rendered) renderTab(t); // theme changed while hidden
+  paintTabs();
+  buildToc(); // contents follow the newly visible page
+}
+function closeTab(id){
+  tabs = tabs.filter(t=>t.id!==id);
+  const v = document.getElementById("view-"+id); if(v) v.remove();
+  if(!tabs.length){ newTab(); return; }
+  if(activeId===id) switchTab(tabs[tabs.length-1].id); else paintTabs();
+  maybeReleaseAssets();
+}
+// Once no open tab still needs the inflated KaTeX/mermaid bundle, ask Rust to
+// drop it — a reading session that has left math and diagrams behind returns
+// to its near-idle footprint instead of holding ~2.5MB for the rest of the day.
+// Derived from the live DOM rather than a counter, so it can't drift.
+function maybeReleaseAssets(){
+  if(!useIpc()) return;
+  const stillNeeded = tabs.some(t=>{
+    const v = document.getElementById("view-"+t.id);
+    return v && (v.querySelector(".katex") || v.querySelector(".mermaid svg"));
+  });
+  if(!stillNeeded) rust("release_asset").catch(()=>{});
+}
+function cur(){ return tabs.find(t=>t.id===activeId); }
+window.__mdview_new_tab_remote = function(){ newTab(); try{window.focus();}catch(e){} };
+window.__mdview_open_payload = function(d){ try{ openDocs([d]); }catch(e){} };
+$("#newtab").onclick = ()=> newTab();
+
+/* ---------- errors ---------- */
+function showErr(t, msg){
+  const v = document.getElementById("view-"+t.id); if(!v) return;
+  const e = v.querySelector(".err"); e.style.display="block"; e.textContent = msg;
+  clearTimeout(showErr._t); showErr._t = setTimeout(()=>{ e.style.display="none"; }, 6000);
+}
+
+/* ---------- input classification ---------- */
+function looksUrl(s){
+  s = s.trim().replace(/^["'<>\s]+|["'<>\s]+$/g,"");
+  return /^(https?:\/\/|file:\/\/\/)[^\s]{4,2000}$/i.test(s);
+}
+function looksPath(s){
+  const t = s.trim().replace(/^["']+|["']+$/g,"");
+  if(!t || t.length>600 || /\n/.test(t)) return null;
+  if(/^(https?:|file:)/i.test(t)) return null;
+  if(/^[A-Za-z]:[\\/][^\n?*<>|"]+$/.test(t)) return t;
+  if(/^\\\\[^\n?*<>|"]+$/.test(t)) return t;
+  if(/^\/[^\n\0]+$/.test(t) && /\.(md|markdown|mdown|mkd|txt|text)$/i.test(t)) return t;
+  if(/^\.(\\|\/)[^\n?*<>|"]+$/.test(t)) return t;
+  return null;
+}
+
+/* ---------- paste / drop / browse ---------- */
+// Rust IPC returns docs as a JSON string (or already-parsed array).
+function parseDocs(x){
+  if(Array.isArray(x)) return x;
+  if(typeof x === "string"){
+    try{ const v = JSON.parse(x); return Array.isArray(v) ? v : []; }catch(e){}
+  }
+  return [];
+}
+// Open docs-with-base payloads: fill the first UNLOADED tab (the active one
+// when it's pristine, otherwise any pristine tab — switched into view), the
+// rest get their own tabs. A rendered tab is never overwritten this way.
+// Returns true when something was opened.
+function openDocs(docs, intoTab){
+  docs = (docs||[]).filter(d=>d && typeof d.text === "string" && d.text.length);
+  if(!docs.length) return false;
+  let t0 = intoTab || cur();
+  let useFirst = !!(t0 && !t0.rendered && !t0.md);
+  if(!useFirst && !intoTab){
+    t0 = tabs.find(x=>!x.rendered && !x.md) || null;
+    useFirst = !!t0;
+  }
+  for(const d of docs){
+    if(useFirst){ setMarkdown(t0, d.text, d.name, d.base); switchTab(t0.id); useFirst = false; }
+    else newTab(d.text, d.name, d.base);
+  }
+  return true;
+}
+// Copied files in Explorer sit on the Windows clipboard as CF_HDROP; only
+// Rust can see those real paths, and with them the images resolve too.
+// True = docs opened this way.
+async function tryPasteClipboardFiles(){
+  if(!useIpc()) return false;
+  try{
+    return openDocs(parseDocs(await rust("clipboard_files")));
+  }catch(e){ return false; }
+}
+// Native open-file dialog — returns paths, so images load like every flow.
+async function pickFileDialog(t){
+  try{
+    if(openDocs(parseDocs(await rust("pick_file")), t)) return;
+  }catch(err){
+    const m = String(err && err.message || err);
+    if(m && !/cancel/i.test(m)) showErr(t, m);
+  }
+}
+async function pasteFromClipboard(t){
+  if(await tryPasteClipboardFiles()) return;
+  try{
+    const items = await navigator.clipboard.read();
+    for(const item of items){
+      for(const type of item.types){
+        if(type.startsWith("image/")) continue;
+        if(type==="text/plain"||type==="text/html"||type.startsWith("text/")){
+          const blob = await item.getType(type);
+          const txt = await blob.text();
+          if(txt && txt.trim()){ await ingestText(t, txt, null); return; }
+        }
+      }
+    }
+  }catch(e){ /* fall through to readText / Ctrl+V handler */ }
+  const txt = await navigator.clipboard.readText();
+  if(txt && txt.trim()) await ingestText(t, txt, null);
+  else showErr(t,"Clipboard is empty.");
+}
+
+async function ingestText(t, text, nameHint){
+  const raw = String(text||"");
+  if(!raw.trim()) return;
+  const p = looksPath(raw.trim());
+  if(p){
+    try{
+      const content = await rust("read_file",{path:p});
+      // Opened as a document: goes to the unloaded tab, never over the
+      // reader's currently open page.
+      openDocs([{text:String(content), name:shortName(p), base:parentDir(p)}]);
+      return;
+    }catch(e){ /* not readable — fall through and render as text */ }
+  }
+  if(looksUrl(raw.trim())){
+    const u = raw.trim();
+    try{
+      const content = await rust("fetch_url",{url:u});
+      openDocs([{text:String(content), name:shortName(u), base:u}]);
+      return;
+    }catch(e){ showErr(t,"Could not fetch URL ("+e.message+"). Rendering as pasted text."); }
+  }
+  setMarkdown(t, raw, nameHint || titleOf(raw), "");
+}
+function parentDir(p){
+  try{
+    const s = String(p).replace(/^[a-z]+:\/\//i,"");
+    const parts = s.replace(/\\/g,"/").split("/");
+    parts.pop();
+    return parts.join("/")||".";
+  }catch(e){ return ""; }
+}
+function shortName(p){
+  try{
+    let s = String(p).replace(/^[a-z]+:\/\//i,"").replace(/^file:\/\/\//,"");
+    s = s.split("?")[0].split("#")[0];
+    const parts = s.replace(/\\/g,"/").split("/").filter(Boolean);
+    return parts.length?parts[parts.length-1].slice(0,40):"pasted";
+  }catch(e){ return "pasted"; }
+}
+const DOC_RE = /\.(m?md|markdown|mdown|mkd|txt|text)$/i;
+// Fallback for file objects that arrive WITHOUT paths (rare — every native
+// flow hands Rust a real path, which carries the directory for images).
+async function ingestFiles(t, files){
+  if(!files||!files.length) return;
+  const texts = [];
+  for(const f of files){
+    if(f.type && (f.type.startsWith("image/")||f.type.startsWith("video/")||f.type.startsWith("audio/"))){
+      showErr(t,"Images are not rendered as markdown ("+f.name+").");
+      continue;
+    }
+    try{ texts.push({name:f.name, text: await f.text()}); }
+    catch(e){ showErr(t,"Cannot read "+f.name); }
+  }
+  if(!texts.length) return;
+  openDocs([{text:texts[0].text, name:texts[0].name, base:""}]);
+  for(let i=1;i<texts.length;i++) newTab(texts[i].text, texts[i].name, "");
+}
+// OS drags sometimes leak paths as text/uri-list (Firefox) or plain text —
+// a free upgrade to full base resolution when present, harmless otherwise.
+function pickDocFromUriList(s){
+  return String(s||"").split("\n").map(x=>x.trim()).filter(x=>x && !x.startsWith("#"))
+    .map(x=>x.replace(/^file:\/\/\//i,"")).map(x=>{ try{ return decodeURIComponent(x); }catch(e){ return x; } })
+    .find(x=>DOC_RE.test(x.split("?")[0].split("#")[0]));
+}
+
+document.addEventListener("paste", async e=>{
+  const t = cur(); if(!t) return;
+  const v = document.getElementById("view-"+t.id);
+  if(v && !v.classList.contains("active")) return;
+  e.preventDefault(); // this app IS the paste target
+  // DataTransfer dies the instant the event dispatch ends (Chromium clears
+  // the protected store) — capture text/files BEFORE any await, or a real
+  // Ctrl+V reads back empty after the IPC roundtrip.
+  const txt = e.clipboardData ? e.clipboardData.getData("text") : "";
+  const evFiles = (e.clipboardData && e.clipboardData.files) ? Array.from(e.clipboardData.files) : [];
+  // Files copied in Explorer win over text: Rust reads CF_HDROP paths, so
+  // the doc opens with its directory and its images load themselves.
+  if(await tryPasteClipboardFiles()) return;
+  if(txt){ await ingestText(t, txt, null); return; }
+  if(evFiles.length) await ingestFiles(t, evFiles);
+});
+document.addEventListener("dragover", e=>{ e.preventDefault(); const t=cur(); const d=document.querySelector("#view-"+(t&&t.id)+" .drop"); if(d) d.classList.add("over"); });
+document.addEventListener("dragleave", e=>{ if(e.target.classList&&e.target.classList.contains("drop")) e.target.classList.remove("over"); });
+document.addEventListener("drop", async e=>{
+  e.preventDefault();
+  const t = cur(); if(!t) return;
+  document.querySelectorAll(".drop.over").forEach(d=>d.classList.remove("over"));
+  // Native OLE drop (wry) opens docs with REAL paths before this ever runs;
+  // what follows only covers a rare JS-only drop. Capture the DataTransfer
+  // synchronously — it goes dead after the first await.
+  let uri="", plain="", files=[];
+  try{
+    const dt = e.dataTransfer;
+    if(dt){
+      uri = dt.getData("text/uri-list")||"";
+      plain = dt.getData("text")||"";
+      files = Array.from(dt.files||[]);
+    }
+  }catch(err){}
+  const leak = useIpc() && (pickDocFromUriList(uri) || pickDocFromUriList(plain));
+  if(leak){
+    try{
+      const content = await rust("read_file",{path:leak});
+      openDocs([{text:String(content), name:shortName(leak), base:parentDir(leak)}]);
+      return;
+    }catch(err){ /* fall through to content */ }
+  }
+  if(files.length) await ingestFiles(t, files);
+});
+
+/* ---------- rendering ---------- */
+function setMarkdown(t, md, name, base){
+  t.md = String(md||"");
+  t.name = (name||titleOf(t.md)).slice(0,48);
+  if(typeof base === "string") t.base = base;
+  paintTabs();
+  renderTab(t);
+}
+async function renderTab(t){
+  const v = document.getElementById("view-"+t.id); if(!v) return;
+  const page = v.querySelector(".page");
+  let html = "";
+  try{
+    if(useIpc()) html = await rust("render",{text:t.md, base:t.base||""});
+    else html = fallbackRender(t.md);
+  }catch(e){ html = fallbackRender(t.md); }
+  page.innerHTML = '<article class="markdown-body">'+html+'</article>';
+  t.rendered = true; t.dirty = false;
+  enhance(page, t.md);
+  buildToc(); // headings are in the DOM already; costs one query pass
+}
+
+/* ---------- local media: Rust serves it ---------- */
+// Every real entry point (drag-drop, copied file, browse, path paste) hands
+// Rust a filesystem path, so relative refs resolve to http://mdview.localhost
+// URLs at render time — no browser-side harvesting, no prompts. The JS paths
+// above only cover content that arrives with no path at all (raw text), where
+// a directory simply does not exist.
+function fallbackRender(md){
+  // tiny fallback if Rust IPC unavailable (e.g. opened as plain file)
+  return "<pre>"+esc(md).replace(/\n/g,"<br>")+"</pre>";
+}
+
+/* lazy libs */
+const loaded = {};
+function loadScript(src){
+  if(loaded[src]) return loaded[src];
+  loaded[src] = new Promise((res,rej)=>{ const s=document.createElement("script"); s.src=src; s.onload=res; s.onerror=rej; document.head.appendChild(s); });
+  return loaded[src];
+}
+// highlight.js is inlined at boot by Rust, so there is nothing to fall back
+// to: if the bundle were missing the viewer would be broken, and silently
+// reaching for a CDN would only mask that. No remote dependency anywhere.
+const AUTO_SUBSET = ["python","javascript","typescript","rust","bash","shell","json","yaml","xml","html","css","cpp","c","csharp","java","go","sql","markdown","ini","diff"];function highlightBlock(b){
+  const cls = b.className||"";
+  const m = cls.match(/language-([\w+-]+)/);
+  const lang = m && m[1].toLowerCase();
+  try{
+    if(lang && !/^(plaintext|text|nohighlight|none)$/.test(lang) && window.hljs.getLanguage(lang)){
+      window.hljs.highlightElement(b);
+      return;
+    }
+    // Untagged or bogus-tagged fence (very common in pasted chatbot output):
+    // auto-detect. Threshold keeps prose/terminal dumps plain instead of
+    // confidently mis-highlighted.
+    if(/^(plaintext|text|nohighlight|none)$/.test(lang||"")) return;
+    const r = window.hljs.highlightAuto(b.textContent, AUTO_SUBSET);
+    if(r && r.relevance > 4){ b.innerHTML = r.value; b.classList.add("hljs"); }
+  }catch(e){}
+}
+// ---- Mermaid label ink ------------------------------------------------
+// `style X fill:…` / `classDef … fill:…` beat our theme (mermaid emits them
+// with !important), but node labels are HTML inside a foreignObject, so `fill`
+// never reaches them — they inherit our foreground and end up light-on-light in
+// dark mode. Finish the author's declaration instead of fighting it: derive the
+// label ink from the fill that is actually painted behind it. The rule is
+// uniform, so theme-filled diagrams need no special case (they already resolve
+// to their own theme's answer).
+const MDV_LINEAR = new Float32Array(256);   // sRGB -> linear, once, not per node
+for(let i=0;i<256;i++){ const c=i/255; MDV_LINEAR[i] = c<=0.04045 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4); }
+const MDV_INK_DARK = "#2c2620", MDV_INK_LIGHT = "#e9e1d3";  // = our two theme text colors
+const MDV_INK = new Map();                 // fill string -> ink, so repeats cost one parse
+function mdvInk(css){
+  const hit = MDV_INK.get(css);
+  if(hit !== undefined) return hit;
+  const s = String(css||"").trim();
+  let r=-1, g=-1, b=-1;
+  if(s.charCodeAt(0) === 35){                      // '#'
+    const h = s.slice(1);
+    if(h.length === 3 || h.length === 4){ r=parseInt(h[0]+h[0],16); g=parseInt(h[1]+h[1],16); b=parseInt(h[2]+h[2],16); }
+    else if(h.length >= 6){ r=parseInt(h.slice(0,2),16); g=parseInt(h.slice(2,4),16); b=parseInt(h.slice(4,6),16); }
+  } else if(s.charCodeAt(0) === 114){              // 'r' of rgb()/rgba()
+    const m = s.match(/^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/);
+    if(m){ r=+m[1]; g=+m[2]; b=+m[3]; }
+  }
+  // WCAG relative luminance; 0.18 sits in a wide empty band between the darkest
+  // theme fill (0.019) and the lightest authored one (0.891), so it is not fragile.
+  const ink = r<0 ? null
+    : (0.2126*MDV_LINEAR[r] + 0.7152*MDV_LINEAR[g] + 0.0722*MDV_LINEAR[b] > 0.18 ? MDV_INK_DARK : MDV_INK_LIGHT);
+  MDV_INK.set(css, ink);
+  return ink;
+}
+function mdvFixInk(svg){
+  const groups = svg.querySelectorAll("g.node, g.cluster");
+  if(!groups.length) return;
+  const edits = [];
+  for(const g of groups){
+    // :scope matters — g.label contains an empty filler <rect> we must not read.
+    const shape = g.querySelector(":scope > rect, :scope > polygon, :scope > circle, :scope > ellipse");
+    if(!shape) continue;
+    const ink = mdvInk(getComputedStyle(shape).fill);   // read phase
+    if(!ink) continue;
+    for(const s of g.querySelectorAll("span")){
+      if(s.style.color) continue;   // author set color: theirs wins, always
+      edits.push([s, ink]);
+    }
+  }
+  for(const [s, ink] of edits) s.style.color = ink;     // write phase, after all reads
+}
+async function enhance(page, srcMd){
+  // code highlight (hljs is inlined at boot by Rust — nothing to fetch)
+  const codes = page.querySelectorAll("pre code");
+  if(codes.length && window.hljs) codes.forEach(highlightBlock);
+  // Mermaid in paper/charcoal dress, matching the theme (base theme + vars).
+  function mermaidOpts(){
+    return isDark()
+      ? { theme:"base", themeVariables:{ background:"#1a1512", primaryColor:"#2b241c",
+          primaryBorderColor:"#4d4332", primaryTextColor:"#e9e1d3", secondaryColor:"#241e17",
+          tertiaryColor:"#2b241c", lineColor:"#a5977d" } }
+      : { theme:"base", themeVariables:{ background:"#faf7f1", primaryColor:"#efe7d5",
+          primaryBorderColor:"#d3c5a8", primaryTextColor:"#2c2620", secondaryColor:"#f4efe2",
+          tertiaryColor:"#efe7d5", lineColor:"#776a52" } };
+  }
+  const mer = [];
+  page.querySelectorAll('pre code.language-mermaid, pre code[class*="language-mermaid"]').forEach(c=>mer.push(c));
+  page.querySelectorAll("pre").forEach(pre=>{
+    if(pre.textContent.trimStart().startsWith("graph ")||pre.textContent.includes("-->")){
+      // leave to highlight; only explicit mermaid fences convert
+    }
+  });
+  if(mer.length){
+    try{
+      // Vendored in the binary and served by Rust (gzipped, inflated on
+      // demand) — mermaid must work with no network.
+      await loadScript(MDVIEW_ASSET+"mermaid/mermaid.min.js");
+      if(window.mermaid){
+        window.mermaid.initialize(Object.assign({startOnLoad:false}, mermaidOpts()));
+        for(const c of mer){
+          const pre = c.closest("pre"); const code = c.textContent;
+          const div = document.createElement("div"); div.className="mermaid"; div.textContent = code;
+          pre.replaceWith(div);
+        }
+        await window.mermaid.run({nodes: page.querySelectorAll(".mermaid")});
+        page.querySelectorAll(".mermaid svg").forEach(mdvFixInk);
+      }
+    }catch(e){}
+  }
+  // Math via KaTeX, vendored into the binary and served by Rust (no CDN, no
+  // network needed). Rust's markdown pass tags math as
+  // <span class="math math-inline|math-display">LaTeX</span>, so KaTeX renders
+  // those nodes directly — auto-render's delimiter scan can't, because the
+  // delimiters were consumed during parsing.
+  if(page.querySelector(".math")){
+    try{
+      if(!document.getElementById("mdview-katex-css")){
+        const st=document.createElement("style"); st.id="mdview-katex-css";
+        st.textContent = await fetch(MDVIEW_ASSET+"katex/katex.min.css").then(r=>r.text());
+        document.head.appendChild(st);
+      }
+      await loadScript(MDVIEW_ASSET+"katex/katex.min.js");
+      if(window.katex){
+        page.querySelectorAll(".math").forEach(el=>{
+          const src = el.textContent || "";
+          try{
+            window.katex.render(src, el, {
+              displayMode: el.classList.contains("math-display"),
+              throwOnError: false
+            });
+          }catch(e){}
+        });
+      }
+    }catch(e){}
+  }
+  // Media anchors: `[![thumb](img)](clip.mp4)` or <a><video/></a>.
+  // Opening these externally means clicks can never reach play/pause.
+  // Inline them as native players instead (thumbnail becomes the poster).
+  // Text-only media links keep opening externally, as before.
+  const VID_EXT = /\.(mp4|m4v|webm|mov|ogv)(\?|#|$)/i;
+  const AUD_EXT = /\.(mp3|wav|ogg)(\?|#|$)/i;
+  page.querySelectorAll('a[href]').forEach(a=>{
+    const h = a.getAttribute("href")||"";
+    const kind = VID_EXT.test(h) ? "video" : AUD_EXT.test(h) ? "audio" : null;
+    if(!kind) return;
+    const img = a.querySelector("img");
+    if(a.querySelector("video,audio") || img){
+      const el = document.createElement(kind);
+      el.setAttribute("controls","");
+      el.setAttribute("preload","metadata");
+      el.src = h;
+      if(kind==="video" && img) el.poster = img.getAttribute("src")||"";
+      a.replaceWith(el);
+    }
+  });
+  // links: local asset/doc refs handled in-app (IPC); http(s) -> new window
+  // (Rust opens the browser); in-page anchors stay. Local first — the
+  // resolved local form is http://mdview.localhost/local/... now.
+  page.querySelectorAll('a[href]').forEach(a=>{
+    const h=a.getAttribute("href")||"";
+    if(/^mdview:/i.test(h) || /^https?:\/\/mdview\.localhost\/local\//i.test(h)){
+      a.addEventListener("click", async ev=>{
+        ev.preventDefault();
+        try{
+          const d = JSON.parse(await rust("open_path",{url:h}));
+          if(d && d.text!==undefined) newTab(String(d.text||""), d.name||"linked", d.base||"");
+        }catch(e){ if(String(e.message||e)!=="__opened__") showErr(cur()||{id:activeId},"Could not open link."); }
+      });
+    }
+    else if(/^https?:/i.test(h)){ a.target="_blank"; a.rel="noopener"; }
+  });
+}
+
+/* ---------- table of contents: progress pill + current section ---------- */
+// A native take on the floating scroll-progress pattern: one quiet pill
+// (ring + current heading) that only appears when a doc earns it — at least
+// two headings and a scrollable page. Click expands the section list upward;
+// picking a row smooth-scrolls there. No dependencies, transform-only motion,
+// honors prefers-reduced-motion.
+const TOC_RING_C = 2*Math.PI*8;
+const TOC_REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+const TOC_LABEL_MAX = 48; // pill stays compact; the full heading lives in title
+const toc = { items: [], active: -1, pos: "center" };
+function tocSlug(s){
+  const b = String(s||"").toLowerCase().trim()
+    .replace(/[^\p{L}\p{N}\s-]/gu,"").replace(/[\s_]+/g,"-")
+    .replace(/-+/g,"-").replace(/^-+|-+$/g,"");
+  return b || "section";
+}
+function buildToc(){
+  const root = $("#toc"), list = $("#tocList");
+  toc.items = []; toc.active = -1;
+  setTocOpen(false);
+  const v = document.querySelector(".view.active");
+  const hs = v ? v.querySelectorAll(".markdown-body h1,.markdown-body h2,.markdown-body h3,.markdown-body h4,.markdown-body h5,.markdown-body h6") : [];
+  const arr = Array.from(hs);
+  if(arr.length < 2){ root.hidden = true; list.innerHTML = ""; return; }
+  const seen = {};
+  let min = 6;
+  arr.forEach(h=>{ const lv = +h.tagName[1]; if(lv < min) min = lv; });
+  // A lone top-level heading is the document title: it stays as a row, but
+  // nothing is tabbed relative to it — siblings render at first level so the
+  // menu doesn't look pushed right. Deeper nesting is preserved, and multiple
+  // outermost headings keep the classic nesting untouched.
+  const flatTop = +arr[0].tagName[1] === min && arr.filter(h=>+h.tagName[1] === min).length === 1;
+  toc.items = arr.map(h=>{
+    let id = h.id || tocSlug(h.textContent);
+    if(seen[id] !== undefined){ seen[id]++; id += "-"+seen[id]; } else seen[id] = 0;
+    h.id = id; // stored el refs drive everything; ids just enable anchors
+    return { id, lv: Math.min(+h.tagName[1], 4), label: h.textContent.trim().replace(/\s+/g," "), el: h };
+  });
+  list.innerHTML = "";
+  toc.items.forEach((it,i)=>{
+    const li = document.createElement("li");
+    const b = document.createElement("button");
+    b.type = "button"; b.title = it.label;
+    b.style.paddingLeft = (10 + Math.max(0, it.lv-min-(flatTop?1:0))*14) + "px";
+    const dot = document.createElement("span"); dot.className = "dot";
+    const t = document.createElement("span"); t.className = "t"; t.textContent = it.label;
+    b.appendChild(dot); b.appendChild(t);
+    b.addEventListener("click", ()=>tocGo(i));
+    li.appendChild(b); list.appendChild(li);
+  });
+  root.hidden = false;
+  updateToc();
+}
+let tocRaf = 0;
+function tocScrolled(){
+  if(tocRaf) return;
+  tocRaf = requestAnimationFrame(()=>{ tocRaf = 0; updateToc(); });
+}
+function updateToc(){
+  const root = $("#toc");
+  if(root.hidden || !toc.items.length) return;
+  const v = document.querySelector(".view.active");
+  if(!v) return;
+  // Short docs that fit the viewport never earn the pill (rechecked on
+  // resize/scroll because zoom and width change scrollability).
+  if(v.scrollHeight <= v.clientHeight + 40){ root.hidden = true; return; }
+  root.hidden = false;
+  const max = v.scrollHeight - v.clientHeight;
+  const p = max > 0 ? Math.min(1, Math.max(0, v.scrollTop/max)) : 0;
+  const arc = $("#tocArc");
+  arc.style.strokeDasharray = TOC_RING_C.toFixed(2);
+  arc.style.strokeDashoffset = (TOC_RING_C*(1-p)).toFixed(2);
+  // Active = last heading at/above the reading line, like the reference.
+  const anchor = v.getBoundingClientRect().top + 110;
+  let ai = 0;
+  toc.items.forEach((it,i)=>{ if(it.el.getBoundingClientRect().top <= anchor) ai = i; });
+  if(ai !== toc.active){
+    toc.active = ai;
+    // Long headings are capped so the pill never goes ridiculously wide;
+    // the pill tooltip always carries the full text.
+    const full = toc.items[ai].label;
+    const pill = $("#tocPill");
+    pill.title = full;
+    $("#tocLabel").textContent = full.length > TOC_LABEL_MAX
+      ? full.slice(0, TOC_LABEL_MAX-1).trimEnd()+"…" : full;
+    const btns = $("#tocList").querySelectorAll("button");
+    btns.forEach((b,i)=>b.classList.toggle("on", i===ai));
+  }
+}
+function tocGo(i){
+  const it = toc.items[i]; if(!it) return;
+  setTocOpen(false);
+  try{ it.el.scrollIntoView({behavior: TOC_REDUCED?"auto":"smooth", block:"start"}); }catch(e){}
+  toc.active = -1; // force label/row refresh once the scroll lands
+  updateToc();
+}
+function setTocOpen(open){
+  const box = $("#tocBox"); if(!box) return;
+  const want = open === undefined ? !box.classList.contains("open") : !!open;
+  box.classList.toggle("open", want);
+  $("#tocPill").setAttribute("aria-expanded", want ? "true" : "false");
+}
+// Docking: center shows both arrows, a docked pill shows only the one that
+// leads back to center. Travel is pure CSS (see #tocBox.pos-*).
+function setTocPos(p){
+  toc.pos = (p === "left" || p === "right") ? p : "center";
+  const box = $("#tocBox"); if(!box) return;
+  box.classList.toggle("pos-left", toc.pos === "left");
+  box.classList.toggle("pos-right", toc.pos === "right");
+  const L = $("#tocLeft"), R = $("#tocRight");
+  L.title = toc.pos === "right" ? "Back to center" : "Move to left side";
+  R.title = toc.pos === "left" ? "Back to center" : "Move to right side";
+  L.setAttribute("aria-label", toc.pos === "right" ? "Move contents pill to center" : "Move contents pill left");
+  R.setAttribute("aria-label", toc.pos === "left" ? "Move contents pill to center" : "Move contents pill right");
+  savePrefs(); // docking survives restarts like zoom/width/theme
+}
+$("#tocLeft").addEventListener("click", e=>{ e.stopPropagation(); setTocPos(toc.pos === "right" ? "center" : "left"); });
+$("#tocRight").addEventListener("click", e=>{ e.stopPropagation(); setTocPos(toc.pos === "left" ? "center" : "right"); });
+$("#tocPill").addEventListener("click", ()=>setTocOpen());
+// Views are per-tab scrollers: capture-phase catches them all.
+document.addEventListener("scroll", tocScrolled, {passive:true, capture:true});
+window.addEventListener("resize", tocScrolled);
+document.addEventListener("pointerdown", e=>{
+  const root = $("#toc"), box = $("#tocBox");
+  if(!root.hidden && box.classList.contains("open") && !root.contains(e.target)) setTocOpen(false);
+});
+document.addEventListener("keydown", e=>{
+  if(e.key === "Escape" && $("#tocBox").classList.contains("open")) setTocOpen(false);
+});
+
+/* ---------- zoom / width / fullscreen / theme ---------- */
+function applyPrefs(){
+  document.documentElement.style.setProperty("--font-scale", fontScale.toFixed(2));
+  document.documentElement.style.setProperty("--read-width", readWidth+"px");
+  const w = $("#width"); if(w && document.activeElement!==w) w.value = String(readWidth);
+  savePrefs();
+}
+function applyTheme(rerender){
+  const h = document.documentElement;
+  h.classList.toggle("dark", darkMode);
+  h.classList.toggle("light", !darkMode);
+  // (hljs light/dark CSS is inlined pre-scoped under html.dark — nothing to swap.)
+  if(window.mermaid) try{ window.mermaid.initialize(Object.assign({startOnLoad:false}, mermaidOpts())); }catch(e){}
+  // Re-render only the visible tab; hidden ones refresh lazily on switch.
+  // (Re-rendering everything per click caused cascading async waves that
+  // looked like "needs multiple presses".)
+  tabs.forEach(t=>{ if(t.rendered){ if(t.id===activeId) renderTab(t); else t.dirty = true; } });
+  savePrefs();
+}
+$("#zin").onclick = ()=>{ fontScale=Math.min(2.2,+(fontScale+0.1).toFixed(2)); applyPrefs(); };
+$("#zout").onclick = ()=>{ fontScale=Math.max(0.6,+(fontScale-0.1).toFixed(2)); applyPrefs(); };
+$("#width").oninput = e=>{ readWidth=+e.target.value; applyPrefs(); };
+async function toggleFS(){
+  if(useIpc()){ try{ await rust("fullscreen",{}); return; }catch(e){} }
+  try{
+    if(!document.fullscreenElement) await document.documentElement.requestFullscreen();
+    else await document.exitFullscreen();
+  }catch(e){}
+}
+$("#fs").onclick = toggleFS;
+$("#theme").onclick = ()=>{
+  darkMode = !isDark();
+  applyTheme(true);
+};
+
+/* ---------- shortcuts ---------- */
+document.addEventListener("keydown", e=>{
+  const mod = e.ctrlKey||e.metaKey;
+  if(mod && (e.key==="t"||e.key==="T")){ e.preventDefault(); newTab(); }
+  else if(mod && (e.key==="w"||e.key==="W")){ e.preventDefault(); if(cur()) closeTab(cur().id); }
+  else if(mod && (e.key==="="||e.key==="+")){ e.preventDefault(); $("#zin").click(); }
+  else if(mod && (e.key==="-"||e.key==="_")){ e.preventDefault(); $("#zout").click(); }
+  else if(mod && e.key==="0"){ e.preventDefault(); fontScale=1.0; applyPrefs(); }
+  else if(e.key==="F11"){ e.preventDefault(); $("#fs").click(); }
+  else if(e.key==="[" && !mod){ readWidth=Math.max(620,readWidth-40); applyPrefs(); }
+  else if(e.key==="]" && !mod){ readWidth=Math.min(1180,readWidth+40); applyPrefs(); }
+  else if(e.altKey && e.key==="ArrowLeft"){ e.preventDefault(); readWidth=Math.max(620,readWidth-40); applyPrefs(); }
+  else if(e.altKey && e.key==="ArrowRight"){ e.preventDefault(); readWidth=Math.min(1180,readWidth+40); applyPrefs(); }
+});
+window.addEventListener("wheel", e=>{
+  if(e.ctrlKey){ e.preventDefault(); fontScale=Math.min(2.2,Math.max(0.6,+(fontScale+(e.deltaY<0?0.1:-0.1)).toFixed(2))); applyPrefs(); }
+},{passive:false});
+
+/* ---------- boot ---------- */
+loadPrefs(); applyPrefs(); applyTheme(false);
+// WebView2 handles F11 itself (native element fullscreen) which fights our
+// Rust-driven borderless fullscreen and desyncs the toggle. Never let the
+// native one stick: Rust owns fullscreen, full stop.
+if(useIpc()) document.addEventListener("fullscreenchange", ()=>{
+  if(document.fullscreenElement){ try{ document.exitFullscreen(); }catch(e){} }
+});
+(function boot(){
+  const init = window.__MDVIEW_INITIAL__;
+  if(init && typeof init === "object" && init.text){ newTab(String(init.text), init.name||"pasted", init.base||""); }
+  else if(typeof init === "string" && init.length){ newTab(init, "pasted"); }
+  else newTab();
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+# Rust build output
+/target
+**/*.rs.bk
+
+# Generated preview bundle — rebuild with: node tools/build-preview.js
+/preview-theme.html
+
+# Print-verification output from headless Chrome
+/print-proof.pdf
+*-proof.pdf
+
+# Runtime prefs (also written to %APPDATA%\mdview)
+/prefs.json
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
