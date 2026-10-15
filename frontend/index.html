@@ -366,6 +366,7 @@
     .markdown-body .mermaid svg{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   }
 </style>
+  <style>__MDVIEW_ANNOTATIONS_CSS__</style>
 </head>
 <body>
 <div id="bar">
@@ -375,6 +376,7 @@
   <button class="ctl" id="zout" title="Zoom out (Ctrl+-)">A−</button>
   <button class="ctl" id="fs" title="Fullscreen (F11)">⛶</button>
   <input id="width" type="range" min="620" max="1180" step="10" value="860" title="Reading width — also [ / ] or Alt+Left/Right">
+  <button class="ctl" id="annToggle" title="Highlights and notes (Ctrl+Shift+A)">✎ <span id="annCount"></span></button>
   <button class="ctl" id="theme" title="Toggle light/dark">◐</button>
 </div>
 <div id="views"></div>
@@ -449,6 +451,7 @@ function rust(cmd, payload){
     window.ipc.postMessage(JSON.stringify(Object.assign({cmd,id},payload)));
   });
 }
+window.__mdview_rust = rust;
 window.__mdview_ipc_result = function(id, ok, data){
   const p = pending.get(id); if(!p) return; pending.delete(id);
   ok ? p.resolve(data) : p.reject(new Error(String(data||"error")));
@@ -510,6 +513,7 @@ function switchTab(id){
   if(t && t.dirty && t.rendered) renderTab(t); // theme changed while hidden
   paintTabs();
   buildToc(); // contents follow the newly visible page
+  if(window.mdviewAnnotationsRefresh) window.mdviewAnnotationsRefresh(id);
 }
 function closeTab(id){
   tabs = tabs.filter(t=>t.id!==id);
@@ -531,6 +535,8 @@ function maybeReleaseAssets(){
   if(!stillNeeded) rust("release_asset").catch(()=>{});
 }
 function cur(){ return tabs.find(t=>t.id===activeId); }
+window.__mdview_get_tabs = () => tabs;
+window.__mdview_active_tab = () => cur();
 window.__mdview_new_tab_remote = function(){ newTab(); try{window.focus();}catch(e){} };
 window.__mdview_open_payload = function(d){ try{ openDocs([d]); }catch(e){} };
 $("#newtab").onclick = ()=> newTab();
@@ -752,7 +758,7 @@ async function renderTab(t){
   }catch(e){ html = fallbackRender(t.md); }
   page.innerHTML = '<article class="markdown-body">'+html+'</article>';
   t.rendered = true; t.dirty = false;
-  enhance(page, t.md);
+  enhance(page, t.md).finally(()=>{ if(window.mdviewAnnotationsRefresh) window.mdviewAnnotationsRefresh(t.id); });
   buildToc(); // headings are in the DOM already; costs one query pass
 }
 
@@ -1143,5 +1149,6 @@ if(useIpc()) document.addEventListener("fullscreenchange", ()=>{
   else newTab();
 })();
 </script>
+  <script>__MDVIEW_ANNOTATIONS_JS__</script>
 </body>
 </html>

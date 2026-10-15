@@ -991,6 +991,22 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
             // Needs the UI thread: modal dialog, owner window, z-order.
             let _ = proxy.send_event(UserEvent::PickFile { id });
         }
+        "load_annotations" => {
+            let p2 = proxy.clone();
+            std::thread::spawn(move || {
+                send_ipc_result(&p2, &id, Ok(load_annotations_json()));
+            });
+        }
+        "save_annotations" => {
+            let data = v.get("data").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let saved = save_annotations_json(&data);
+            let js = format!(
+                "window.__mdview_ipc_result && window.__mdview_ipc_result({}, true, {});",
+                serde_json::to_string(&id).unwrap_or("\"\"".into()),
+                if saved { "true" } else { "false" }
+            );
+            let _ = proxy.send_event(UserEvent::IpcEval(js));
+        }
         "save_prefs" => {
             let payload = serde_json::to_string(&v).unwrap_or_default();
             save_prefs_json(&payload);
@@ -1283,6 +1299,8 @@ fn build_html(initial: &InitialDoc) -> String {
         .replacen("__MDVIEW_HLJS_JS__", &hljs_js(), 1)
         .replacen("__MDVIEW_HLJS_LIGHT_CSS__", include_str!("../frontend/vendor/hljs-light.css"), 1)
         .replacen("__MDVIEW_HLJS_DARK_CSS__", &scope_css(include_str!("../frontend/vendor/hljs-dark.css"), "html.dark"), 1)
+        .replacen("__MDVIEW_ANNOTATIONS_CSS__", include_str!("../frontend/annotations.css"), 1)
+        .replacen("__MDVIEW_ANNOTATIONS_JS__", include_str!("../frontend/annotations.js"), 1)
 }
 
 /// highlight.js is vendored (gzipped, ~43KB) and inlined: code highlighting
@@ -1323,6 +1341,32 @@ fn scope_css(css: &str, scope: &str) -> String {
 // NOTE: the view is loaded via with_html => opaque origin, where browsers
 // refuse to persist localStorage (silently session-only). So prefs live in
 // %APPDATA%\mdview\prefs.json, injected at boot, saved via "save_prefs" IPC.
+
+fn annotations_path() -> PathBuf {
+    let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
+    PathBuf::from(base).join("mdview").join("annotations.json")
+}
+
+fn load_annotations_json() -> String {
+    std::fs::read_to_string(annotations_path())
+        .ok()
+        .filter(|s| !s.trim().is_empty() && serde_json::from_str::<serde_json::Value>(s).is_ok())
+        .unwrap_or_else(|| "{\"version\":1,\"documents\":{}}".into())
+}
+
+fn save_annotations_json(text: &str) -> bool {
+    const MAX_ANNOTATIONS_BYTES: usize = 16 * 1024 * 1024;
+    if text.len() > MAX_ANNOTATIONS_BYTES { return false; }
+    let value: serde_json::Value = match serde_json::from_str(text) {
+        Ok(v) if v.is_object() => v,
+        _ => return false,
+    };
+    let out = value.to_string();
+    if let Some(dir) = annotations_path().parent() {
+        if std::fs::create_dir_all(dir).is_err() { return false; }
+    }
+    std::fs::write(annotations_path(), out).is_ok()
+}
 
 fn prefs_path() -> PathBuf {
     let base = std::env::var("APPDATA").unwrap_or_else(|_| ".".into());
