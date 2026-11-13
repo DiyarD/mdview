@@ -1010,6 +1010,15 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
                 send_ipc_result(&p2, &id, clipboard_docs_json());
             });
         }
+        "clipboard_text" => {
+            // WebView2's navigator.clipboard.read() is permission-blocked in
+            // the app, so the Paste button reads the clipboard via Win32 in
+            // this process instead (same pattern as clipboard_files).
+            let p2 = proxy.clone();
+            std::thread::spawn(move || {
+                send_ipc_result(&p2, &id, clipboard_text());
+            });
+        }
         "pick_file" => {
             // Needs the UI thread: modal dialog, owner window, z-order.
             let _ = proxy.send_event(UserEvent::PickFile { id });
@@ -1292,6 +1301,72 @@ fn collect_md(dir: &Path, depth: u8, docs: &mut Vec<DocPayload>) {
         } else {
             push_doc(&p, docs);
         }
+    }
+}
+
+/// Read the text on the Windows clipboard directly, in the caller's process.
+/// WebView2's navigator.clipboard.read() is permission-blocked here, so the
+/// Paste button goes through Win32 like every other native read in the app.
+fn clipboard_text() -> Result<String, String> {
+    use windows_sys::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
+    use windows_sys::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    const CF_UNICODETEXT: u32 = 13; // CF_UNICODETEXT
+    const CF_TEXT: u32 = 1; // CF_TEXT
+    unsafe {
+        if OpenClipboard(std::ptr::null_mut()) == 0 {
+            return Err("clipboard is busy".into());
+        }
+        let res = (|| -> Result<String, String> {
+            const MAX_CHARS: usize = MAX_MD_BYTES / 2; // UTF-16 code units
+            if IsClipboardFormatAvailable(CF_UNICODETEXT) != 0 {
+                let h = GetClipboardData(CF_UNICODETEXT);
+                if h.is_null() {
+                    return Err("clipboard data unavailable".into());
+                }
+                let p = GlobalLock(h) as *const u16;
+                if p.is_null() {
+                    return Err("clipboard data unavailable".into());
+                }
+                // Bounded scan: a hostile or corrupt clipboard must not hang us.
+                let mut len = 0usize;
+                while *p.add(len) != 0 {
+                    len += 1;
+                    if len > MAX_CHARS {
+                        let _ = GlobalUnlock(h);
+                        return Err("clipboard text too large".into());
+                    }
+                }
+                let s = String::from_utf16_lossy(std::slice::from_raw_parts(p, len));
+                let _ = GlobalUnlock(h);
+                Ok(s)
+            } else if IsClipboardFormatAvailable(CF_TEXT) != 0 {
+                let h = GetClipboardData(CF_TEXT);
+                if h.is_null() {
+                    return Err("clipboard data unavailable".into());
+                }
+                let p = GlobalLock(h) as *const u8;
+                if p.is_null() {
+                    return Err("clipboard data unavailable".into());
+                }
+                let mut len = 0usize;
+                while *p.add(len) != 0 {
+                    len += 1;
+                    if len > MAX_MD_BYTES {
+                        let _ = GlobalUnlock(h);
+                        return Err("clipboard text too large".into());
+                    }
+                }
+                let s = String::from_utf8_lossy(std::slice::from_raw_parts(p, len)).into_owned();
+                let _ = GlobalUnlock(h);
+                Ok(s)
+            } else {
+                Err("no text in the clipboard".into())
+            }
+        })();
+        let _ = CloseClipboard();
+        res
     }
 }
 

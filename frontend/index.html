@@ -234,7 +234,7 @@
   .similar b{ color:var(--fg); font-weight:600; }
   .similar .btn{ padding:6px 12px; font-size:12.5px; }
   /* Saved documents on the welcome screen. */
-  .saved{ margin-top:26px; padding-top:22px; border-top:1px solid var(--border); text-align:left; }
+  .saved-docs{ margin-top:26px; padding-top:22px; border-top:1px solid var(--border); text-align:left; }
   .saved-head{ display:flex; align-items:center; justify-content:space-between; gap:12px;
     flex-wrap:wrap; margin-bottom:12px; }
   .saved-head h2{ font-family:var(--serif); font-size:16px; font-weight:600; margin:0; }
@@ -530,7 +530,7 @@ function newTab(initialMd, initialName, base, source){
     + '<div class="row"><button class="btn primary" data-act="paste">Paste now</button>'
     + '<button class="btn" data-act="browse">Browse files…</button></div>'
     + '<p class="hint">or drag &amp; drop files or folders anywhere • <kbd>Ctrl</kbd>+<kbd>T</kbd> new tab • <kbd>Ctrl</kbd>+<kbd>W</kbd> close</p>'
-    + '<div class="saved"><div class="saved-head"><h2>Saved documents</h2>'
+    + '<div class="saved-docs"><div class="saved-head"><h2>Saved documents</h2>'
     + '<input class="saved-search" type="search" placeholder="Search title or content…" autocomplete="off" aria-label="Search saved documents"></div>'
     + '<div class="saved-list"></div></div>'
     + '</div></div></div>';
@@ -970,6 +970,20 @@ async function pickFileDialog(t){
 }
 async function pasteFromClipboard(t){
   if(await tryPasteClipboardFiles()) return;
+  if(useIpc()){
+    // Native path: WebView2's navigator.clipboard.read() is permission-blocked
+    // in the app, so Rust reads the Windows clipboard directly — same as every
+    // other native clipboard read here.
+    try{
+      const txt = String(await rust("clipboard_text") || "");
+      if(txt && txt.trim()){ await ingestText(t, txt, null); return; }
+      showErr(t, "Clipboard is empty (or holds no text).");
+    }catch(e){
+      showErr(t, "Could not read the clipboard: " + (e.message || e));
+    }
+    return;
+  }
+  // Standalone preview only: the browser API may still be blocked there.
   try{
     const items = await navigator.clipboard.read();
     for(const item of items){
@@ -983,9 +997,13 @@ async function pasteFromClipboard(t){
       }
     }
   }catch(e){ /* fall through to readText / Ctrl+V handler */ }
-  const txt = await navigator.clipboard.readText();
-  if(txt && txt.trim()) await ingestText(t, txt, null);
-  else showErr(t,"Clipboard is empty.");
+  try{
+    const txt = await navigator.clipboard.readText();
+    if(txt && txt.trim()) await ingestText(t, txt, null);
+    else showErr(t,"Clipboard is empty.");
+  }catch(e){
+    showErr(t,"Clipboard read blocked — press Ctrl+V inside this window.");
+  }
 }
 
 async function ingestText(t, text, nameHint){

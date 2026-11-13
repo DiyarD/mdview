@@ -33,6 +33,7 @@ const shim =
   "  else if (m.cmd === 'save_prefs') reply(true, true);\n" +
   "  else if (m.cmd === 'set_title') reply(true, 'true');\n" +
   "  else if (m.cmd === 'clipboard_files') reply(true, '[]');\n" +
+  "  else if (m.cmd === 'clipboard_text') reply(true, '# Button paste doc\\n\\nbutton paste body');\n" +
   "  else if (m.cmd === 'release_asset') reply(true, true);\n" +
   "  else if (m.cmd === 'recent_documents') {\n" +
   "    reply(true, JSON.stringify(__store.slice().sort(function (a, b) { return b.updated_at - a.updated_at; }).map(function (d) {\n" +
@@ -129,6 +130,15 @@ async function main() {
     report("welcome shows empty saved state", await waitFor(send,
       "!!document.querySelector('.saved-empty') && document.querySelector('.saved-empty').textContent.indexOf('No saved documents') >= 0", 5000));
 
+    // 1b. Paste now reads the clipboard natively (Win32 via Rust), not the
+    //     permission-blocked browser API.
+    report("Paste now renders the clipboard document", await (async () => {
+      await evalValue(send, "document.querySelector('[data-act=\"paste\"]').click()");
+      return waitFor(send, "!!document.querySelector('.markdown-body')", 10000);
+    })());
+    const buttonPasteTitle = await evalValue(send, "(document.querySelector('.tab .t') || {}).textContent || ''");
+    report("Paste now titles the tab from the document", buttonPasteTitle === "Button paste doc", "got: " + buttonPasteTitle);
+
     // 2. Paste a document — the real paste path.
     report("paste renders a tab", await (async () => {
       await evalValue(send, `(() => {
@@ -143,9 +153,15 @@ async function main() {
     report("tab is titled from the markdown heading", tabTitle === "UI test doc", "got: " + tabTitle);
 
     // 3. Save (Ctrl+S button). The exact regression that made this dead: the
-    //    document id must not clobber the bridge's request id.
+    //    document id must not clobber the bridge's request id. The saved class
+    //    must not resize/shift the button (class-collision regression).
+    const size0 = await evalValue(send, "(() => { const r = document.querySelector('#save').getBoundingClientRect(); return [Math.round(r.height), Math.round(r.top)]; })()");
     await evalValue(send, "document.querySelector('#save').click()");
     report("save marks the button saved", await waitFor(send, "document.querySelector('#save').classList.contains('saved')", 5000));
+    const size1 = await evalValue(send, "(() => { const r = document.querySelector('#save').getBoundingClientRect(); return [Math.round(r.height), Math.round(r.top)]; })()");
+    report("saved state keeps the button size and position",
+      Array.isArray(size0) && Array.isArray(size1) && size0[0] === size1[0] && size0[1] === size1[1],
+      "before: " + JSON.stringify(size0) + " after: " + JSON.stringify(size1));
     const sentSave = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'save_document'; })");
     report("save_document carries doc_id (never the bridge id)",
       Array.isArray(sentSave) && sentSave.length === 1 && sentSave[0].doc_id === null,
