@@ -320,12 +320,52 @@ async function main() {
     report("badge counts the highlight", (await evalValue(send, "document.querySelector('#annCount').textContent")) === "1");
     report("panel lists it with the note", (await evalValue(send, "document.querySelectorAll('.ann-item').length")) === 1);
     await evalValue(send, "document.querySelector('#annToggle').click()"); // panel closed
-    // Layering: a second identical highlight registers in the same paint group.
-    await evalValue(send, selectText);
+    // Layering: a sub-chunk stacks inside the outer highlight; clicking the
+    // overlapping region must open the INNER (most specific) annotation.
+    const selectBravo = `(() => {
+      const p = document.querySelector('.view.active .markdown-body p');
+      const tn = p && p.firstChild;
+      const ix = tn ? tn.nodeValue.indexOf('bravo') : -1;
+      if (ix < 0) return false;
+      const r = document.createRange();
+      r.setStart(tn, ix);
+      r.setEnd(tn, ix + 5);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      document.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true, clientX: 40, clientY: 40 }));
+      return true;
+    })()`;
+    await evalValue(send, selectBravo);
     await waitFor(send, "!document.querySelector('#annPropose').hidden", 5000);
     await evalValue(send, "document.querySelector('#annPropose').click()");
-    report("a second highlight lands on the same passage (layers stack)", await waitFor(send,
+    report("proposing with a fresh selection deselects it (highlight must be visible)", await waitFor(send,
+      "window.getSelection().rangeCount === 0 || window.getSelection().isCollapsed", 3000));
+    report("a sub-chunk highlight is stored over the existing one", await waitFor(send, `(() => {
+      const adds = window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_add'; });
+      return adds.length >= 2 && adds[adds.length - 1].exact === 'bravo';
+    })()`, 8000));
+    report("same-color layers stack in one paint group", await waitFor(send,
       "window.CSS && CSS.highlights && CSS.highlights.get('mdv-ann-blue').size >= 2", 8000));
+    const clickAtChar = (needle) => `(() => {
+      const p = document.querySelector('.view.active .markdown-body p');
+      const tn = p && p.firstChild;
+      const ix = tn.nodeValue.indexOf(${JSON.stringify(needle)});
+      const r = document.createRange();
+      r.setStart(tn, ix);
+      r.collapse(true);
+      const rect = r.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: rect.left + 2, clientY: rect.top + 2, bubbles: true }));
+      return true;
+    })()`;
+    await evalValue(send, clickAtChar('bravo'));
+    report("clicking the sub-chunk opens ITS editor (innermost wins)", await waitFor(send,
+      "!document.querySelector('#annEditor').hidden && (document.querySelector('#annEditor .ann-note-wrap') || {}).hidden", 5000));
+    await evalValue(send, "(() => { document.dispatchEvent(new MouseEvent('click', { clientX: 5, clientY: 5, bubbles: true })); return true; })()");
+    await evalValue(send, clickAtChar('charlie'));
+    report("clicking the noted outer highlight expands its note", await waitFor(send,
+      "!document.querySelector('#annEditor').hidden && document.querySelector('#annEditor .ann-textarea').value === 'typed note'", 5000));
+    await evalValue(send, "(() => { document.dispatchEvent(new MouseEvent('click', { clientX: 5, clientY: 5, bubbles: true })); return true; })()");
     // Two-click icon delete of both highlights; marker goes, badge empties.
     const clickFirstItem = `(() => { const item = document.querySelector('.ann-item'); if (item) item.click(); return true; })()`;
     const clickTrash = `(() => { const b = document.querySelector('#annEditor .ann-trash'); if (b) b.click(); return true; })()`;

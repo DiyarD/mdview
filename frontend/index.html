@@ -485,9 +485,9 @@
      of the highlight's last line. */
   .ann-note-marker{ position:absolute; z-index:5; width:17px; height:17px; display:inline-flex;
     align-items:center; justify-content:center; border:0; border-radius:50%; padding:0;
-    background:color-mix(in srgb, var(--quote) 22%, transparent); color:var(--quote);
-    cursor:pointer; opacity:.55; transition:opacity .15s ease; }
-  .ann-note-marker:hover{ opacity:1; background:color-mix(in srgb, var(--quote) 32%, transparent); }
+    background:color-mix(in srgb, var(--quote) 34%, transparent); color:var(--fg);
+    cursor:pointer; opacity:.85; transition:opacity .15s ease; }
+  .ann-note-marker:hover{ opacity:1; background:color-mix(in srgb, var(--quote) 44%, transparent); }
   .ann-note-marker svg{ width:9px; height:9px; display:block; }
   @media (prefers-reduced-motion: reduce){ .ann-note-marker{ transition:none; } }
   @media (max-width:600px){
@@ -1424,6 +1424,9 @@ async function annCreateFromSelection(anchor){
       color: annSelectedColor, note: "",
     });
     if(!a || typeof a !== "object" || a.id == null) throw new Error("bad response");
+    // The native selection paints over the highlight, hiding it: drop it so
+    // the new highlight is visible immediately.
+    try{ window.getSelection().removeAllRanges(); }catch(_){}
     mdvAnnotationsRefresh(t.id);
   }catch(e){
     showErr(t, "Could not save the highlight: " + (e.message || e));
@@ -1470,7 +1473,9 @@ function annOpenEditor(t, row, rect){
   if(!editor || !row) return;
   hideAnnPropose();
   const color = ANN_COLORS.includes(row.color) ? row.color : "yellow";
-  annEditorState = { tabId: t.id, row, color, armTimer: null, expanded: false, input: null, noteTimer: null };
+  // A stored note is the point of opening the editor: open with it visible.
+  const hasNote = !!(row.note && String(row.note).trim());
+  annEditorState = { tabId: t.id, row, color, armTimer: null, expanded: hasNote, input: null, noteTimer: null };
   editor.innerHTML = "";
   const colors = document.createElement("div");
   colors.className = "ann-colors";
@@ -1520,8 +1525,8 @@ function annOpenEditor(t, row, rect){
   pencil.type = "button";
   pencil.className = "ann-color ann-pencil";
   pencil.innerHTML = ANN_PENCIL_SVG;
-  pencil.title = "Add a note";
-  pencil.setAttribute("aria-pressed", "false");
+  pencil.title = hasNote ? "Hide note" : "Add a note";
+  pencil.setAttribute("aria-pressed", hasNote ? "true" : "false");
   pencil.setAttribute("aria-label", "Toggle note");
   colors.appendChild(pencil);
   // Delete: icon, two-click arm to confirm (same pattern as everywhere else).
@@ -1547,7 +1552,7 @@ function annOpenEditor(t, row, rect){
   editor.appendChild(colorInput);
   const noteWrap = document.createElement("div");
   noteWrap.className = "ann-note-wrap";
-  noteWrap.hidden = true;
+  noteWrap.hidden = !hasNote;
   const input = document.createElement("textarea");
   input.className = "ann-textarea";
   input.placeholder = "Add a note…";
@@ -1571,6 +1576,7 @@ function annOpenEditor(t, row, rect){
   const w = 250;
   editor.style.left = Math.max(10, Math.min(window.innerWidth - w - 10, (rect && rect.left) || 40)) + "px";
   editor.style.top = Math.max(8, Math.min(window.innerHeight - 120, ((rect && rect.bottom) || 100) + 8)) + "px";
+  if(hasNote) input.focus({ preventScroll: true });
 }
 function annCloseEditor(){
   const editor = $("#annEditor");
@@ -1616,11 +1622,20 @@ function annHitAt(t, x, y){
   if(!range || !root.contains(range.startContainer)) return null;
   const off = annFlatOffset(state.flat, root, range.startContainer, range.startOffset);
   if(off == null) return null;
+  // Overlapping highlights: the most specific (smallest span) wins, with the
+  // most recently created winning ties — sub-chunks layer over the passage
+  // that contains them, not the other way around.
+  let best = null, bestSize = Infinity;
   for(const row of state.rows){
     const res = state.resolved.get(row.id);
-    if(res && off >= res.start && off <= res.end) return { row, res };
+    if(!res || off < res.start || off > res.end) continue;
+    const size = res.end - res.start;
+    if(size < bestSize || (size === bestSize && best && row.id > best.row.id)){
+      best = { row, res };
+      bestSize = size;
+    }
   }
-  return null;
+  return best;
 }
 // Hooks used elsewhere in the app (function declarations hoist, so call order
 // in the source does not matter).

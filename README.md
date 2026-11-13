@@ -275,8 +275,8 @@ the file, not in the database blob.
   as every destructive action in the app.
 - **Layers stack** — highlights paint with translucent colors, so
   overlapping highlights composite over each other: the same color stacks
-  deeper, different colors mix. Layering is inherent to the paint system,
-  not a mode.
+  deeper, different colors mix, and sub-chunks nest inside larger ones.
+  Clicking an overlap opens the most specific (innermost) highlight.
 - **Custom colors, per theme** — light and dark each keep their own five
   slots, tuned for their background. The rainbow circle redefines the active
   slot for the current theme only; annotations store slot names; both
