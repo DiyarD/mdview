@@ -243,11 +243,21 @@
     color:var(--fg); font:13px var(--sans); outline-offset:2px; }
   .saved-search:focus{ outline:2px solid var(--accent); border-color:var(--accent); }
   .saved-list{ display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto; }
-  .saved-item{ display:flex; flex-direction:column; gap:3px; width:100%; text-align:left;
+  .saved-item{ display:flex; align-items:center; gap:2px; width:100%;
     border:1px solid var(--border); background:var(--card); border-radius:10px;
-    padding:9px 12px; cursor:pointer; font:inherit; color:inherit;
     transition:border-color .15s, box-shadow .15s; }
   .saved-item:hover{ border-color:var(--quote-bar); box-shadow:var(--shadow); }
+  .saved-main{ flex:1; min-width:0; border:0; background:transparent; color:inherit;
+    text-align:left; font:inherit; cursor:pointer; border-radius:9px;
+    padding:9px 4px 9px 12px; display:flex; flex-direction:column; gap:3px; }
+  .saved-main:hover{ background:rgba(122,96,58,.08); }
+  .saved-main:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .saved-x{ border:0; background:transparent; color:var(--quote); cursor:pointer;
+    border-radius:6px; padding:2px 6px; font-size:14px; line-height:1.4;
+    align-self:center; min-width:24px; text-align:center; }
+  .saved-x:hover{ background:rgba(122,96,58,.16); color:inherit; }
+  .saved-x.armed{ color:#a64c40; font-size:12.5px; font-weight:600; min-width:44px; }
+  .saved-x.armed:hover{ background:rgba(166,76,64,.14); }
   .saved-title{ font:600 13px/1.3 var(--sans); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .saved-meta{ font:11px var(--sans); color:var(--quote); }
   .saved-snippet{ font:12px/1.45 var(--serif); color:var(--quote); overflow:hidden;
@@ -508,7 +518,7 @@ function titleOf(md, fallback){
 function newTab(initialMd, initialName, base, source){
   const id = ++seq;
   const si = sourceInfo(base, source);
-  const t = { id, md:"", name: initialName||("tab "+id), rendered:false, dirty:false,
+  const t = { id, md:"", name: initialName||"Home", rendered:false, dirty:false,
     base:base||"", sourceKind:si.kind, sourceRef:si.ref,
     savedId:null, similarDismissed:false };
   tabs.push(t);
@@ -584,7 +594,11 @@ function closeTab(id){
   tabs = tabs.filter(t=>t.id!==id);
   const v = document.getElementById("view-"+id); if(v) v.remove();
   if(!tabs.length){ newTab(); return; }
-  if(activeId===id) switchTab(tabs[tabs.length-1].id); else paintTabs();
+  if(activeId===id) switchTab(tabs[tabs.length-1].id);
+  // The strip always reflects the array: a structural change must repaint.
+  // (switchTab only toggles the active class by design — it cannot remove
+  // the closed tab's button, so do it here regardless of the path.)
+  paintTabs();
   maybeReleaseAssets();
 }
 // Once no open tab still needs the inflated KaTeX/mermaid bundle, ask Rust to
@@ -783,22 +797,74 @@ async function loadSavedList(container, query){
     }
     container.innerHTML = "";
     for(const r of rows){
-      const item = document.createElement("button");
-      item.type = "button"; item.className = "saved-item";
-      const title = document.createElement("div"); title.className = "saved-title";
-      title.textContent = r.title || "untitled";
-      const meta = document.createElement("div"); meta.className = "saved-meta";
-      meta.textContent = relTime(r.updated_at);
-      const snip = document.createElement("div"); snip.className = "saved-snippet";
-      snip.textContent = r.preview || r.snippet || "";
-      item.appendChild(title); item.appendChild(meta); item.appendChild(snip);
-      item.onclick = ()=> openSavedDocument(r.id).catch(e=> showErr(cur()||{id:activeId}, "Could not open the saved document."));
+      const title = r.title || "untitled";
+      const item = document.createElement("div");
+      item.className = "saved-item";
+      const main = document.createElement("button");
+      main.type = "button";
+      main.className = "saved-main";
+      main.setAttribute("aria-label", "Open " + title);
+      const t = document.createElement("div"); t.className = "saved-title"; t.textContent = title;
+      const meta = document.createElement("div"); meta.className = "saved-meta"; meta.textContent = relTime(r.updated_at);
+      const snip = document.createElement("div"); snip.className = "saved-snippet"; snip.textContent = r.preview || r.snippet || "";
+      main.appendChild(t); main.appendChild(meta); main.appendChild(snip);
+      main.onclick = ()=> openSavedDocument(r.id).catch(e=> showErr(cur()||{id:activeId}, "Could not open the saved document: " + (e.message||e)));
+      const del = document.createElement("button");
+      del.type = "button";
+      del.className = "saved-x";
+      del.textContent = "×";
+      del.title = "Delete saved document";
+      del.setAttribute("aria-label", "Delete " + title);
+      del.onclick = ()=> requestDeleteSavedDocument(r.id, item, container, del);
+      item.appendChild(main); item.appendChild(del);
       container.appendChild(item);
     }
   }catch(e){
     if(seq === loadSavedSeq && container && container.isConnected){
       container.innerHTML = '<div class="saved-empty">Saved documents are unavailable: '+esc(e && e.message || e)+'</div>';
     }
+  }
+}
+// Delete a saved document with a two-click confirm: the first click arms the
+// button ("Delete?"), a second click within three seconds deletes, anything
+// else disarms. No modals, no silent deletes.
+function disarmDeleteSaved(btn){
+  btn.dataset.armed = "0";
+  btn.classList.remove("armed");
+  btn.textContent = "×";
+  clearTimeout(btn._armedTimer);
+}
+function requestDeleteSavedDocument(id, item, container, btn){
+  if(btn.dataset.armed === "1"){ void confirmDeleteSavedDocument(id, item, container, btn); return; }
+  btn.dataset.armed = "1";
+  btn.classList.add("armed");
+  btn.textContent = "Delete?";
+  clearTimeout(btn._armedTimer);
+  btn._armedTimer = setTimeout(()=> disarmDeleteSaved(btn), 3000);
+}
+async function confirmDeleteSavedDocument(id, item, container, btn){
+  try{
+    const ok = await dbCall("delete_document", { doc_id: id });
+    if(ok !== true){
+      showErr(cur()||{id:activeId}, "Could not delete the saved document (it may already be gone).");
+      disarmDeleteSaved(btn);
+      return;
+    }
+    // Any tab still marked saved points at a document the store no longer
+    // holds — fall them all back to unsaved rather than claiming otherwise.
+    for(const t of tabs){ if(t.savedId === id) t.savedId = null; }
+    updateSaveState();
+    item.remove();
+    if(!container.isConnected) return;
+    if(!container.querySelector(".saved-item")){
+      const empty = document.createElement("div");
+      empty.className = "saved-empty";
+      empty.textContent = "No saved documents yet. Save one with Ctrl+S.";
+      container.appendChild(empty);
+    }
+  }catch(e){
+    showErr(cur()||{id:activeId}, "Could not delete the saved document: " + (e.message||e));
+    disarmDeleteSaved(btn);
   }
 }
 // Hook for the future highlight/annotation feature: making a highlight or a

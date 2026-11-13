@@ -486,6 +486,18 @@ impl Store {
         Ok(true)
     }
 
+    /// Delete a saved document and its search-index entry. Annotations rows
+    /// cascade via the foreign key (foreign_keys is enabled per connection).
+    /// Returns false when the id does not exist — deleting is idempotent.
+    pub fn delete(&self, id: i64) -> rusqlite::Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM documents WHERE id = ?1", params![id])?;
+        self.conn
+            .execute("DELETE FROM documents_fts WHERE rowid = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
     /// Find a stored document that may be the same logical document as `text`.
     ///
     /// Exact content-hash matches are returned first. Otherwise a SimHash
@@ -1057,6 +1069,38 @@ mod tests {
         let p = s.auto_save("Notes", "identical body paste", "", "paste", "").unwrap();
         assert_ne!(f.id, p.id, "a paste must not attach to a saved file row");
         assert_eq!(s.recent(10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn delete_removes_document_and_fts_entry() {
+        let s = store();
+        let doc = save(&s, "Doomed", "unique marker zorblax", "");
+        assert_eq!(s.search("zorblax", 10).unwrap().len(), 1);
+        assert!(s.delete(doc.id).unwrap());
+        // Gone from every read path, and FTS does not hold it either.
+        assert!(s.open_document(doc.id).unwrap().is_none());
+        assert_eq!(s.search("zorblax", 10).unwrap().len(), 0);
+        assert!(s.recent(10).unwrap().is_empty());
+        // Deleting the same id again is a no-op, not an error.
+        assert!(!s.delete(doc.id).unwrap());
+    }
+
+    #[test]
+    fn delete_cascades_to_annotations() {
+        let s = store();
+        let doc = save(&s, "Doomed", "body", "");
+        s.conn
+            .execute(
+                "INSERT INTO annotations (document_id, anchor, color, note, created_at, updated_at) VALUES (?1, '{}', 'yellow', 'n', 1, 1)",
+                params![doc.id],
+            )
+            .unwrap();
+        assert!(s.delete(doc.id).unwrap());
+        let n: i64 = s
+            .conn
+            .query_row("SELECT count(*) FROM annotations WHERE document_id = ?1", params![doc.id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]

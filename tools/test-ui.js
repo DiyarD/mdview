@@ -70,6 +70,10 @@ const shim =
   "    if (d) d.title = m.title;\n" +
   "    reply(true, 'true');\n" +
   "  }\n" +
+  "  else if (m.cmd === 'delete_document') {\n" +
+  "    var i = __store.findIndex(function (x) { return x.id === m.doc_id; });\n" +
+  "    if (i >= 0) { __store.splice(i, 1); reply(true, 'true'); } else reply(true, 'false');\n" +
+  "  }\n" +
   "  else if (m.cmd === 'find_similar') {\n" +
   "    if (String(m.text || '').indexOf('sim-target-marker') >= 0 && __store.length) {\n" +
   "      var t = __store[__store.length - 1];\n" +
@@ -173,7 +177,7 @@ async function main() {
 
     // 7. Click it — it must open.
     const beforeTabs = await evalValue(send, "document.querySelectorAll('.tab').length");
-    await evalValue(send, "document.querySelector('.saved-item').click()");
+    await evalValue(send, "document.querySelector('.saved-item .saved-main').click()");
     report("open_document fires for the clicked result", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'open_document' && m.doc_id === 1; })", 5000));
     report("the saved document opens in a new tab", await waitFor(send, "document.querySelectorAll('.tab').length > " + beforeTabs, 5000));
@@ -195,12 +199,46 @@ async function main() {
       "document.querySelector('.view.active .markdown-body') && document.querySelector('.view.active .markdown-body').textContent.indexOf('alpha bravo') >= 0", 8000));
     report("banner is dismissed after opening", (await evalValue(send, "!document.querySelector('.similar')")) === true);
 
+    // 9. Ctrl+W: closing a tab must remove its button from the strip.
+    const pressW = async () => {
+      await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'w', ctrlKey: true, bubbles: true }))");
+      await sleep(80);
+    };
+    await evalValue(send, "document.querySelector('#newtab').click()");
+    await evalValue(send, "document.querySelector('#newtab').click()");
+    const beforeClose = await evalValue(send, "document.querySelectorAll('.tab').length");
+    await pressW();
+    report("Ctrl+W removes the closed tab from the strip",
+      (await evalValue(send, "document.querySelectorAll('.tab').length")) === beforeClose - 1 &&
+      (await evalValue(send, "document.querySelectorAll('.view').length")) === beforeClose - 1);
+    await pressW();
+    report("Ctrl+W again: strip still matches the tab array",
+      (await evalValue(send, "document.querySelectorAll('.tab').length")) === beforeClose - 2);
+    // Close everything down; the last close must spawn one fresh empty tab.
+    await pressW(); await pressW(); await pressW(); await pressW();
+    report("closing the last tab creates a fresh empty tab",
+      (await evalValue(send, "document.querySelectorAll('.tab').length")) === 1 &&
+      (await evalValue(send, "!!document.querySelector('.drop')")) === true);
+
     // 9. Bridge contract: every request id is the bridge's own string — the
     //    exact regression that hung every DB call.
     const ids = await evalValue(send, "window.__UI_TEST_SENT__.map(function (m) { return m.id; })");
     report("every request id is the bridge's own (rN)",
       Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === "string" && /^r\d+$/.test(id)),
       JSON.stringify(ids));
+
+    // 10. Delete a saved document from the home screen, from the row itself.
+    report("home lists the saved document with a delete button", await waitFor(send,
+      "!!document.querySelector('.saved-item .saved-x')", 5000));
+    await evalValue(send, "(() => { document.querySelector('.saved-item .saved-x').click(); return true; })()");
+    report("first click arms the confirm", (await evalValue(send, "(document.querySelector('.saved-item .saved-x') || {}).textContent")) === "Delete?");
+    await evalValue(send, "(() => { document.querySelector('.saved-item .saved-x').click(); return true; })()");
+    report("second click deletes the row", await waitFor(send,
+      "!document.querySelector('.saved-item') && !!document.querySelector('.saved-empty')", 5000));
+    const sentDelete = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'delete_document'; })");
+    report("delete_document targets the saved row",
+      Array.isArray(sentDelete) && sentDelete.length === 1 && sentDelete[0].doc_id === 1,
+      JSON.stringify(sentDelete));
 
     const failed = results.filter((r) => !r.ok).length;
     console.log("");

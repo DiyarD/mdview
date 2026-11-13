@@ -1,4 +1,4 @@
-# mdview
+﻿# mdview
 
 **A markdown viewer you open by pressing a key.**
 
@@ -222,7 +222,7 @@ Or go wide and large for a big display:
 
 ## Saved documents
 
-The **💾** button (or <kbd>Ctrl</kbd>+<kbd>S</kbd>) stores the current document
+The **Save** button (or <kbd>Ctrl</kbd>+<kbd>S</kbd>) stores the current document
 in mdview's internal SQLite database at `%APPDATA%\mdview\documents.db`.
 Nothing is saved to the database until you ask — opening, reading or pasting a
 document never writes to it.
@@ -232,11 +232,15 @@ document never writes to it.
   blob is the canonical copy; the search index is derived, never a second
   canonical text.
 - **Double-click a tab to rename** the document; the window title follows, and
-  a rename of a saved document is written to the store.
-- **Search the welcome screen** — every empty tab lists your recent saved
+  a rename of a saved document is written to the store. Fresh tabs are titled
+  **Home**.
+- **Search the welcome screen** — every fresh tab lists your recent saved
   documents and a search box. One query searches title *and* content through an
   FTS5 trigram index: prefixes, substrings and most near misses match, and
   title hits rank first. <kbd>Enter</kbd> opens the first result.
+- **Delete from the row** — each saved entry carries a ×; the first click arms
+  it ("Delete?") and the second confirms. Deleting removes the document and
+  its search entry (annotations cascade with it) and is idempotent.
 - **Same document, noticed** — when any markdown is opened, mdview checks the
   store and, if it looks like something you saved, offers to open the saved
   version instead. The offer is a quiet banner with **Open saved** /
@@ -403,7 +407,7 @@ this is **Windows-only as written**.
 ```powershell
 cargo run                                          # debug
 cargo build --release                              # -> target\release\mdview.exe
-cargo test --release                               # 44 tests + 1 doc-fixture test
+cargo test --release                               # 46 tests + 1 doc-fixture test
 ```
 
 The project has no build script and no code generation. Vendored renderer assets
@@ -527,16 +531,17 @@ docs/demo/field-notes.md   the document every screenshot is taken from
 docs/screenshots/          generated screenshots
 ```
 
-There are 44 unit tests covering the renderer, table wrapping, media URL
+There are 46 unit tests covering the renderer, table wrapping, media URL
 resolution, vendored-asset inflation, preferences, the local-media gate and the
 document database (schema migration, compression round-trips, FTS search,
-ranking, fuzzy matching, auto-save idempotency and cross-source identity).
+ranking, fuzzy matching, deletion and annotation cascade, auto-save idempotency
+and cross-source identity).
 
 UI behavior is tested against the real page by `node tools/test-ui.js`. It
 assembles the interface exactly like the screenshots below, but with a
 stateful fake document store behind the IPC boundary, then drives headless
 Chrome through the flows the user actually performs: paste a document, save it
-with the 💾 button, double-click a tab to rename it (Enter commits), open
+with the Save button, double-click a tab to rename it (Enter commits), open
 **Saved documents** on the empty tab, search (debounced) and click the result —
 and verifies the similarity offer swaps in the saved document only on explicit
 **Open saved**. It exits non-zero if any of that breaks.

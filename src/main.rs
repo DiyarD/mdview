@@ -1080,6 +1080,13 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
                 .and_then(|ok| serde_json::to_string(&ok).map_err(|e| e.to_string()));
             send_ipc_result(&proxy, &id, res);
         }
+        "delete_document" => {
+            let doc_id = v.get("doc_id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let res = db_lock()
+                .and_then(|s| s.delete(doc_id).map_err(|e| e.to_string()))
+                .and_then(|ok| serde_json::to_string(&ok).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
         "find_similar" => {
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let source_ref = v.get("source_ref").and_then(|x| x.as_str()).unwrap_or("").to_string();
