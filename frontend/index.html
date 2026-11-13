@@ -73,7 +73,7 @@
   #views{ position:relative; flex:1 1 0%; min-height:0; }
   .view{ position:absolute; inset:0; display:none; overflow-y:auto; }
   .view.active{ display:block; }
-  .page{ max-width:var(--read-width); margin:0 auto; padding:40px 36px 96px; transition:max-width .15s ease; }
+  .page{ max-width:var(--read-width); margin:0 auto; padding:40px 36px 96px; transition:max-width .15s ease; position:relative; }
   /* Markdown body: editorial serif prose. Personality lives in type, rhythm
      and hairlines — never in loud color. */
   .markdown-body{ background:transparent !important; color:var(--fg); font-family:var(--serif);
@@ -245,15 +245,14 @@
   .saved-list{ display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto; }
   .saved-item{ display:flex; align-items:center; gap:2px; width:100%;
     border:1px solid var(--border); background:var(--card); border-radius:10px;
-    transition:border-color .15s, box-shadow .15s; }
-  .saved-item:hover{ border-color:var(--quote-bar); box-shadow:var(--shadow); }
+    transition:border-color .15s, box-shadow .15s, background .15s; }
+  .saved-item:hover{ border-color:var(--quote-bar); box-shadow:var(--shadow); background:rgba(122,96,58,.08); }
   .saved-main{ flex:1; min-width:0; border:0; background:transparent; color:inherit;
     text-align:left; font:inherit; cursor:pointer; border-radius:9px;
     padding:9px 4px 9px 12px; display:flex; flex-direction:column; gap:3px; }
-  .saved-main:hover{ background:rgba(122,96,58,.08); }
   .saved-main:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
   .saved-x{ border:0; background:transparent; color:var(--quote); cursor:pointer;
-    border-radius:6px; padding:2px 6px; font-size:14px; line-height:1.4;
+    margin:4px 5px 4px 0; border-radius:6px; padding:2px 6px; font-size:14px; line-height:1.4;
     align-self:center; min-width:24px; text-align:center; }
   .saved-x:hover{ background:rgba(122,96,58,.16); color:inherit; }
   .saved-x.armed{ color:#a64c40; font-size:12.5px; font-weight:600; min-width:44px; }
@@ -471,16 +470,26 @@
     border-radius:50%; background:var(--card); opacity:.92; }
   .ann-pencil{ display:inline-flex; align-items:center; justify-content:center; background:transparent; }
   .ann-pencil svg{ width:12px; height:12px; display:block; }
-  .ann-pencil[aria-pressed="true"]{ outline:2px solid var(--accent); outline-offset:2px; }
+  .ann-pencil[aria-pressed="true"]{ outline:1px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset:2px; }
   .ann-color-input{ position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
-  .ann-note-wrap{ margin-top:10px; }
   .ann-textarea{ display:block; width:100%; min-height:66px; resize:vertical; box-sizing:border-box;
     background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:8px;
     padding:8px; font:12px/1.5 var(--sans); outline-offset:2px; }
-  .ann-textarea:focus{ outline:2px solid var(--accent); }
-  .ann-editor-actions{ display:flex; align-items:center; justify-content:flex-end; gap:7px; margin-top:10px; }
-  .ann-editor-actions .btn.danger{ color:#a64c40; }
-  .ann-editor-actions .btn.danger.armed{ background:rgba(166,76,64,.14); border-color:#a64c40; }
+  .ann-textarea:focus{ outline:1px solid color-mix(in srgb, var(--accent) 55%, transparent); outline-offset:1px; border-color:var(--border); }
+  .ann-note-wrap{ margin-top:2px; }
+  .ann-trash{ display:inline-flex; align-items:center; justify-content:center; background:transparent; }
+  .ann-trash svg{ width:13px; height:13px; display:block; }
+  .ann-trash.armed{ background:#a64c40; border-color:#a64c40; color:#fff; }
+  .ann-trash.armed:hover{ border-color:#a64c40; }
+  /* Non-intrusive marker that a highlight carries a note — sits at the end
+     of the highlight's last line. */
+  .ann-note-marker{ position:absolute; z-index:5; width:17px; height:17px; display:inline-flex;
+    align-items:center; justify-content:center; border:0; border-radius:50%; padding:0;
+    background:color-mix(in srgb, var(--quote) 22%, transparent); color:var(--quote);
+    cursor:pointer; opacity:.55; transition:opacity .15s ease; }
+  .ann-note-marker:hover{ opacity:1; background:color-mix(in srgb, var(--quote) 32%, transparent); }
+  .ann-note-marker svg{ width:9px; height:9px; display:block; }
+  @media (prefers-reduced-motion: reduce){ .ann-note-marker{ transition:none; } }
   @media (max-width:600px){
     #annPanel{ right:8px; top:calc(var(--bar-h) + 8px); bottom:8px; width:min(330px,calc(100vw - 16px)); }
   }
@@ -546,7 +555,8 @@ let fontScale = 1.0, readWidth = 860, darkMode = null;
 const PREFS_KEY = "mdview:prefs:v1";
 let saveT = null;
 function savePrefs(){
-  const p = { theme: darkMode?"dark":"light", fontScale, readWidth, tocPos: toc.pos, annColors: { ...annPalette } };
+  const p = { theme: darkMode?"dark":"light", fontScale, readWidth, tocPos: toc.pos,
+    annColors: { light: { ...annPalette.light }, dark: { ...annPalette.dark } } };
   // localStorage works when opened as a file; ignored (throws) on the
   // opaque with_html origin — the Rust file below is the real store.
   try{ localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }catch(e){}
@@ -562,11 +572,25 @@ function applyPrefsObject(p){
   if(typeof p.fontScale==="number" && p.fontScale>=0.6 && p.fontScale<=2.2){ fontScale = p.fontScale; touched = true; }
   if(typeof p.readWidth==="number" && p.readWidth>=620 && p.readWidth<=1180){ readWidth = p.readWidth; touched = true; }
   if(p.tocPos==="left"||p.tocPos==="right"||p.tocPos==="center"){ setTocPos(p.tocPos); touched = true; }
-  // Highlight palette slots (customized hexes), validated per value.
+  // Highlight palettes, one per theme (customized hexes, validated per value).
+  // A flat single set (written before the palettes were split per theme)
+  // applies to both.
   if(p.annColors && typeof p.annColors === "object"){
-    for(const k of Object.keys(ANN_DEFAULT_PALETTE)){
-      const v = p.annColors[k];
-      if(typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v.trim())) annPalette[k] = v.trim().toLowerCase();
+    const hexOk = v => typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v.trim());
+    let appliedNested = false;
+    for(const theme of ["light", "dark"]){
+      const src = p.annColors[theme];
+      if(!src || typeof src !== "object") continue;
+      for(const k of Object.keys(ANN_DEFAULT_LIGHT)){
+        const v = src[k];
+        if(hexOk(v)){ annPalette[theme][k] = v.trim().toLowerCase(); appliedNested = true; }
+      }
+    }
+    if(!appliedNested){
+      for(const k of Object.keys(ANN_DEFAULT_LIGHT)){
+        const v = p.annColors[k];
+        if(hexOk(v)){ annPalette.light[k] = v.trim().toLowerCase(); annPalette.dark[k] = v.trim().toLowerCase(); }
+      }
     }
   }
   return touched;
@@ -682,6 +706,7 @@ function switchTab(id){
   updateWindowTitle();
   annUpdateBadge();
   annRenderPanelList();
+  annRenderMarkers();
 }
 function closeTab(id){
   tabs = tabs.filter(t=>t.id!==id);
@@ -1004,13 +1029,18 @@ async function flushAutoSave(){
 // rewritten; orphans are kept and shown as "needs review", never re-pointed.
 // Everything goes through the SQLite store — nothing is kept in localStorage.
 const ANN_CONTEXT = 64; // characters of context stored on each side of a quote
-const ANN_SKIP = "svg, .mermaid, .katex-mathml, script, style, noscript, [aria-hidden='true'], #annPanel, #annEditor";
+const ANN_SKIP = "svg, .mermaid, .katex-mathml, script, style, noscript, [aria-hidden='true'], #annPanel, #annEditor, .ann-note-marker";
+const ANN_NOTE_DEBOUNCE = 400; // ms; mirrors the welcome-screen search debounce
+const ANN_TRASH_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6h11M8 5.8V4.9A1.4 1.4 0 0 1 9.4 3.5h1.2A1.4 1.4 0 0 1 12 4.9v.9M6.5 6l.66 9.2a1.4 1.4 0 0 0 1.4 1.3h3a1.4 1.4 0 0 0 1.4-1.3L13.9 6"/></svg>';
+const ANN_NOTE_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h12M4 10h12M4 14h7"/></svg>';
 const ANN_COLORS = ["yellow", "green", "blue", "pink", "purple"];
-const ANN_DEFAULT_PALETTE = { yellow: "#efc558", green: "#89b882", blue: "#7bafda", pink: "#dc8fa2", purple: "#ae97dc" };
-// The five circle colors are user-customizable and persist in prefs.json —
-// annotations store the slot name, never a hex, so repainting a slot
-// repaints every annotation in it instantly.
-let annPalette = { ...ANN_DEFAULT_PALETTE };
+const ANN_DEFAULT_LIGHT = { yellow: "#e6b93c", green: "#7cae78", blue: "#5d94c7", pink: "#c3788f", purple: "#9b83c9" };
+const ANN_DEFAULT_DARK  = { yellow: "#f0c85a", green: "#8fca89", blue: "#7cb9e9", pink: "#e496ac", purple: "#b39ae4" };
+// The five circle colors are TWO independently saved palettes — one per
+// theme. Highlights are stored as slot names, so light and dark sets are
+// edited independently (prefs.json) and both slots repaint instantly.
+const annPalette = { light: { ...ANN_DEFAULT_LIGHT }, dark: { ...ANN_DEFAULT_DARK } };
+function annPaletteOf(){ return isDark() ? annPalette.dark : annPalette.light; }
 const ANN_PENCIL_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12.8 10.8 5.5l3.7 3.7-7.3 7.3H3.5z"/><path d="M10.8 5.5 13 3.3a1.5 1.5 0 0 1 2.1 0l1.6 1.6a1.5 1.5 0 0 1 0 2.1l-2.2 2.2"/></svg>';
 function annPaletteInject(){
   const hex = (h, a) => {
@@ -1019,14 +1049,15 @@ function annPaletteInject(){
   };
   let el = document.getElementById("annPaletteStyle");
   if(!el){ el = document.createElement("style"); el.id = "annPaletteStyle"; document.head.appendChild(el); }
-  el.textContent = Object.keys(ANN_DEFAULT_PALETTE).map(c =>
-    "::highlight(mdv-ann-" + c + "){background:" + hex(annPalette[c], .52) + ";color:inherit}" +
-    "html.dark ::highlight(mdv-ann-" + c + "){background:" + hex(annPalette[c], .62) + ";color:inherit}"
+  el.textContent = Object.keys(ANN_DEFAULT_LIGHT).map(c =>
+    "::highlight(mdv-ann-" + c + "){background:" + hex(annPalette.light[c], .52) + ";color:inherit}" +
+    "html.dark ::highlight(mdv-ann-" + c + "){background:" + hex(annPalette.dark[c], .62) + ";color:inherit}"
   ).join("");
 }
 function annSyncSwatches(row){
+  const pal = annPaletteOf();
   row.querySelectorAll(".ann-color[data-color]").forEach(x => {
-    x.style.background = annPalette[x.dataset.color];
+    x.style.background = pal[x.dataset.color];
   });
 }
 // Per open tab: DB rows, resolution results and the flat-text caches.
@@ -1186,6 +1217,39 @@ function annRebuildPaint(){
     }
   }
 }
+// Non-intrusive proof that a highlight carries a note: a faded badge at the
+// end of the anchored passage's last line. Clicking it opens the editor.
+function annRenderMarkers(){
+  document.querySelectorAll(".ann-note-marker").forEach(el => el.remove());
+  const t = cur();
+  if(!t) return;
+  const state = annState.get(t.id);
+  if(!state || !state.flat || !state.resolved.size) return;
+  const view = document.getElementById("view-" + t.id);
+  const page = view ? view.querySelector(".page") : null;
+  if(!page) return;
+  const pr = page.getBoundingClientRect();
+  for(const row of state.rows){
+    if(!row.note || !String(row.note).trim()) continue;
+    const res = state.resolved.get(row.id);
+    if(!res) continue;
+    const range = annRangeFromOffsets(state.flat, res.start, res.end);
+    if(!range) continue;
+    const rects = range.getClientRects();
+    if(!rects.length) continue;
+    const r1 = rects[rects.length - 1];
+    const m = document.createElement("button");
+    m.type = "button";
+    m.className = "ann-note-marker";
+    m.innerHTML = ANN_NOTE_SVG;
+    m.title = "Note: " + String(row.note).slice(0, 140);
+    m.setAttribute("aria-label", "Highlight with note — activate to edit it");
+    m.style.left = Math.max(0, Math.min(r1.right - pr.left - 15, pr.width - 18)) + "px";
+    m.style.top = Math.max(0, r1.top - pr.top - 6) + "px";
+    m.onclick = e => { e.stopPropagation(); annOpenEditor(t, row, annRectNearPoint(e.clientX, e.clientY)); };
+    page.appendChild(m);
+  }
+}
 // Fresh truth: list the document's annotations, resolve them against the
 // live render, paint, and persist any re-anchoring that changed something.
 async function mdvAnnotationsRefresh(tabId){
@@ -1233,6 +1297,7 @@ async function mdvAnnotationsRefresh(tabId){
   annRebuildPaint();
   annUpdateBadge();
   annRenderPanelList();
+  annRenderMarkers();
 }
 function annUpdateBadge(){
   const b = $("#annCount");
@@ -1265,11 +1330,11 @@ function annRenderPanelList(){
     return;
   }
   if(t.savedId == null){
-    list.innerHTML = '<div class="ann-empty">No highlights yet.<br><br>Select any passage and choose Save highlight — the document is stored automatically so its highlights have a stable home.</div>';
+    list.innerHTML = '<div class="ann-empty">No highlights yet.<br><br>Select a passage — the document is stored automatically so its highlights have a stable home.</div>';
     return;
   }
   if(!state.rows.length){
-    list.innerHTML = '<div class="ann-empty">No highlights yet.<br><br>Select text to highlight it, or add a note for context.</div>';
+    list.innerHTML = '<div class="ann-empty">No highlights yet.<br><br>Select text, hit the highlighter — that is the whole flow.</div>';
     return;
   }
   list.innerHTML = "";
@@ -1287,7 +1352,7 @@ function annRenderPanelList(){
     }
     const meta = document.createElement("div"); meta.className = "ann-meta";
     const dot = document.createElement("span"); dot.className = "ann-dot";
-    dot.style.background = annPalette[row.color] || annPalette.yellow;
+    dot.style.background = annPaletteOf()[row.color] || annPaletteOf().yellow;
     meta.appendChild(dot);
     const label = document.createElement("span");
     label.textContent = row.note ? "Highlight · Note" : "Highlight";
@@ -1343,55 +1408,69 @@ function annTogglePanel(force){
   if(show) annRenderPanelList();
   annUpdateBadge();
 }
-// Apply a color immediately. In the collapsed editor there is no Save
-// button — clicking a circle IS the action (instant highlight / recolor).
-async function annApplyEditorColor(c){
-  const es = annEditorState;
-  if(!es) return;
-  const t = tabs.find(x => x.id === es.tabId);
-  if(!t){ annCloseEditor(); return; }
-  if(!useIpc()){ showErr(t, "Annotations are stored in the mdview app."); return; }
-  if(es.row){
-    try{
-      const ok = await dbCall("annotation_update", { annotation_id: es.row.id, color: c, note: es.row.note || "" });
-      if(ok !== true) throw new Error("the annotation no longer exists");
-      annCloseEditor();
-      mdvAnnotationsRefresh(t.id); // single source of truth: re-list, re-paint
-    }catch(e){
-      showErr(t, "Could not recolor the annotation: " + (e.message || e));
-    }
-    return;
-  }
+// Propose click = the action itself: the highlight is stored instantly with
+// the default color. Identity first — an unsaved document is auto-saved so
+// the highlight has a stable home.
+async function annCreateFromSelection(anchor){
+  const t = cur();
+  if(!t || !useIpc()) return;
+  hideAnnPropose();
   if(t.savedId == null){ await window.mdviewAutoSaveDocument(t); }
-  if(t.savedId == null){
-    showErr(t, "Could not save the document, so the highlight was not stored.");
-    return;
-  }
+  if(t.savedId == null){ showErr(t, "Could not save the document, so the highlight was not stored."); return; }
   try{
     const a = await dbCall("annotation_add", {
-      doc_id: t.savedId, exact: es.anchor.exact, prefix: es.anchor.prefix,
-      suffix: es.anchor.suffix, start: es.anchor.start, end: es.anchor.end,
-      color: c, note: "",
+      doc_id: t.savedId, exact: anchor.exact, prefix: anchor.prefix,
+      suffix: anchor.suffix, start: anchor.start, end: anchor.end,
+      color: annSelectedColor, note: "",
     });
     if(!a || typeof a !== "object" || a.id == null) throw new Error("bad response");
-    annCloseEditor();
     mdvAnnotationsRefresh(t.id);
   }catch(e){
     showErr(t, "Could not save the highlight: " + (e.message || e));
   }
 }
-function annOpenEditor(t, target, rect){
+// A circle click IS the action: immediate recolor of the open annotation.
+async function annApplyEditorColor(c){
+  const es = annEditorState;
+  if(!es || !es.row) return;
+  const t = tabs.find(x => x.id === es.tabId);
+  if(!t){ annCloseEditor(); return; }
+  if(!useIpc()) return;
+  try{
+    const ok = await dbCall("annotation_update", { annotation_id: es.row.id, color: c, note: es.row.note || "" });
+    if(ok !== true) throw new Error("the annotation no longer exists");
+    es.row.color = c;
+    annCloseEditor();
+    mdvAnnotationsRefresh(t.id); // single source of truth: re-list, re-paint
+  }catch(e){
+    showErr(t, "Could not recolor the annotation: " + (e.message || e));
+  }
+}
+// Notes save themselves, debounced like the home-screen search box — there
+// is no Save button to press.
+async function annSaveNote(){
+  const es = annEditorState;
+  if(!es || !es.row || !es.input) return;
+  es.noteTimer = null; // the debounce fired; nothing pending
+  const t = tabs.find(x => x.id === es.tabId);
+  if(!t) return;
+  const note = es.input.value;
+  if(note === String(es.row.note || "")) return;
+  try{
+    const ok = await dbCall("annotation_update", { annotation_id: es.row.id, color: es.color, note });
+    if(ok !== true) throw new Error("the annotation no longer exists");
+    es.row.note = note;
+    mdvAnnotationsRefresh(t.id); // markers + panel follow the note
+  }catch(e){
+    showErr(t, "Could not save the note: " + (e.message || e));
+  }
+}
+function annOpenEditor(t, row, rect){
   const editor = $("#annEditor");
-  if(!editor) return;
+  if(!editor || !row) return;
   hideAnnPropose();
-  const isNew = !target || target.id == null;
-  const color = isNew ? annSelectedColor
-    : (ANN_COLORS.includes(target.color) ? target.color : "yellow");
-  // A fresh selection opens as a bare palette (one click applies, click away
-  // discards). Opening an existing highlight opens the note view directly —
-  // that is the edit intent.
-  const startExpanded = !isNew;
-  annEditorState = { tabId: t.id, anchor: isNew ? target : null, row: isNew ? null : target, color, armTimer: null, expanded: startExpanded };
+  const color = ANN_COLORS.includes(row.color) ? row.color : "yellow";
+  annEditorState = { tabId: t.id, row, color, armTimer: null, expanded: false, input: null, noteTimer: null };
   editor.innerHTML = "";
   const colors = document.createElement("div");
   colors.className = "ann-colors";
@@ -1402,7 +1481,7 @@ function annOpenEditor(t, target, rect){
     b.type = "button";
     b.className = "ann-color";
     b.dataset.color = c;
-    b.style.background = annPalette[c];
+    b.style.background = annPaletteOf()[c];
     b.title = "Highlight " + c;
     b.setAttribute("role", "radio");
     b.setAttribute("aria-checked", c === color ? "true" : "false");
@@ -1412,7 +1491,7 @@ function annOpenEditor(t, target, rect){
       colors.querySelectorAll(".ann-color[data-color]").forEach(x => {
         x.setAttribute("aria-checked", String(x.dataset.color === c));
       });
-      if(!annEditorState.expanded) void annApplyEditorColor(c);
+      void annApplyEditorColor(c);
     };
     colors.appendChild(b);
   }
@@ -1427,65 +1506,60 @@ function annOpenEditor(t, target, rect){
   colorInput.className = "ann-color-input";
   colorInput.setAttribute("aria-hidden", "true");
   colorInput.tabIndex = -1;
-  colorInput.value = annPalette[color] || ANN_DEFAULT_PALETTE[color] || "#efc558";
+  colorInput.value = annPaletteOf()[color] || ANN_DEFAULT_LIGHT[color] || "#e6b93c";
   colorInput.oninput = () => {
-    annPalette[annEditorState.color] = colorInput.value.toLowerCase();
+    annPaletteOf()[annEditorState.color] = colorInput.value.toLowerCase();
     annPaletteInject();
     annSyncSwatches(colors);
     savePrefs();
   };
   picker.onclick = () => colorInput.click();
   colors.appendChild(picker);
-  // Pencil expands the note area with Save/Cancel.
+  // Pencil expands/collapses the note area.
   const pencil = document.createElement("button");
   pencil.type = "button";
   pencil.className = "ann-color ann-pencil";
   pencil.innerHTML = ANN_PENCIL_SVG;
-  pencil.title = startExpanded ? "Hide note" : "Add a note";
-  pencil.setAttribute("aria-pressed", startExpanded ? "true" : "false");
+  pencil.title = "Add a note";
+  pencil.setAttribute("aria-pressed", "false");
   pencil.setAttribute("aria-label", "Toggle note");
   colors.appendChild(pencil);
+  // Delete: icon, two-click arm to confirm (same pattern as everywhere else).
+  const del = document.createElement("button");
+  del.type = "button";
+  del.className = "ann-color ann-trash";
+  del.innerHTML = ANN_TRASH_SVG;
+  del.title = "Delete highlight";
+  del.setAttribute("aria-label", "Delete highlight");
+  del.onclick = () => {
+    if(del.dataset.armed === "1"){ void annDeleteEditorRow(); return; }
+    del.dataset.armed = "1";
+    del.classList.add("armed");
+    del.title = "Click again to delete";
+    clearTimeout(annEditorState.armTimer);
+    annEditorState.armTimer = setTimeout(() => {
+      if(annEditorState){ annEditorState.armTimer = null; }
+      del.dataset.armed = "0"; del.classList.remove("armed"); del.title = "Delete highlight";
+    }, 3000);
+  };
+  colors.appendChild(del);
   editor.appendChild(colors);
   editor.appendChild(colorInput);
   const noteWrap = document.createElement("div");
   noteWrap.className = "ann-note-wrap";
-  noteWrap.hidden = !startExpanded;
+  noteWrap.hidden = true;
   const input = document.createElement("textarea");
   input.className = "ann-textarea";
-  input.placeholder = "Add a note (optional)…";
+  input.placeholder = "Add a note…";
   input.setAttribute("aria-label", "Annotation note");
-  input.value = isNew ? "" : String(target.note || "");
+  input.value = String(row.note || "");
+  input.oninput = () => {
+    clearTimeout(annEditorState.noteTimer);
+    annEditorState.noteTimer = setTimeout(() => { void annSaveNote(); }, ANN_NOTE_DEBOUNCE);
+  };
   noteWrap.appendChild(input);
-  const actions = document.createElement("div");
-  actions.className = "ann-editor-actions";
-  const cancel = document.createElement("button");
-  cancel.type = "button"; cancel.className = "btn"; cancel.textContent = "Cancel";
-  cancel.onclick = () => annCloseEditor();
-  actions.appendChild(cancel);
-  if(!isNew){
-    const del = document.createElement("button");
-    del.type = "button"; del.className = "btn danger"; del.textContent = "Delete";
-    // Two-click confirm, same arm/confirm/3s-disarm pattern as the saved list.
-    del.onclick = () => {
-      if(del.dataset.armed === "1"){ void annDeleteEditorRow(); return; }
-      del.dataset.armed = "1";
-      del.classList.add("armed");
-      del.textContent = "Delete?";
-      clearTimeout(annEditorState.armTimer);
-      annEditorState.armTimer = setTimeout(() => {
-        if(annEditorState){ annEditorState.armTimer = null; }
-        del.dataset.armed = "0"; del.classList.remove("armed"); del.textContent = "Delete";
-      }, 3000);
-    };
-    actions.appendChild(del);
-  }
-  const save = document.createElement("button");
-  save.type = "button"; save.className = "btn primary";
-  save.textContent = isNew ? "Save highlight" : "Save changes";
-  save.onclick = () => { void annSaveEditor(input.value.trim()); };
-  actions.appendChild(save);
-  noteWrap.appendChild(actions);
   editor.appendChild(noteWrap);
+  annEditorState.input = input;
   pencil.onclick = () => {
     annEditorState.expanded = !annEditorState.expanded;
     noteWrap.hidden = !annEditorState.expanded;
@@ -1494,60 +1568,27 @@ function annOpenEditor(t, target, rect){
     if(annEditorState.expanded) input.focus({ preventScroll: true });
   };
   editor.hidden = false;
-  const w = Math.min(330, window.innerWidth - 20);
+  const w = 250;
   editor.style.left = Math.max(10, Math.min(window.innerWidth - w - 10, (rect && rect.left) || 40)) + "px";
-  editor.style.top = Math.max(8, Math.min(window.innerHeight - 260, ((rect && rect.bottom) || 100) + 8)) + "px";
-  if(startExpanded) input.focus({ preventScroll: true });
+  editor.style.top = Math.max(8, Math.min(window.innerHeight - 120, ((rect && rect.bottom) || 100) + 8)) + "px";
 }
 function annCloseEditor(){
   const editor = $("#annEditor");
-  if(annEditorState && annEditorState.armTimer) clearTimeout(annEditorState.armTimer);
+  const es = annEditorState;
+  if(es){
+    // Never strand a debounced note: flush it on close.
+    if(es.noteTimer){ clearTimeout(es.noteTimer); es.noteTimer = null; void annSaveNote(); }
+    if(es.armTimer) clearTimeout(es.armTimer);
+  }
   annEditorState = null;
   if(editor) editor.hidden = true;
   try{ window.getSelection().removeAllRanges(); }catch(_){}
-}
-async function annSaveEditor(note){
-  const es = annEditorState;
-  if(!es) return;
-  const t = tabs.find(x => x.id === es.tabId);
-  if(!t){ annCloseEditor(); return; }
-  if(!useIpc()){ showErr(t, "Annotations are stored in the mdview app."); return; }
-  if(es.row){
-    try{
-      const ok = await dbCall("annotation_update", { annotation_id: es.row.id, color: es.color, note });
-      if(ok !== true) throw new Error("the annotation no longer exists");
-      annCloseEditor();
-      mdvAnnotationsRefresh(t.id); // single source of truth: re-list, re-paint
-    }catch(e){
-      showErr(t, "Could not save the annotation: " + (e.message || e));
-    }
-    return;
-  }
-  // New annotation: never store one without an identity — auto-save first.
-  if(t.savedId == null){
-    await window.mdviewAutoSaveDocument(t);
-  }
-  if(t.savedId == null){
-    showErr(t, "Could not save the document, so the highlight was not stored.");
-    return;
-  }
-  try{
-    const a = await dbCall("annotation_add", {
-      doc_id: t.savedId, exact: es.anchor.exact, prefix: es.anchor.prefix,
-      suffix: es.anchor.suffix, start: es.anchor.start, end: es.anchor.end,
-      color: es.color, note,
-    });
-    if(!a || typeof a !== "object" || a.id == null) throw new Error("bad response");
-    annCloseEditor();
-    mdvAnnotationsRefresh(t.id);
-  }catch(e){
-    showErr(t, "Could not save the highlight: " + (e.message || e));
-  }
 }
 async function annDeleteEditorRow(){
   const es = annEditorState;
   if(!es || !es.row) return;
   const t = tabs.find(x => x.id === es.tabId);
+  if(es.noteTimer){ clearTimeout(es.noteTimer); es.noteTimer = null; } // don't resurrect after delete
   try{
     const ok = await dbCall("annotation_delete", { annotation_id: es.row.id });
     if(ok !== true) throw new Error("the annotation no longer exists");
@@ -1590,6 +1631,7 @@ function mdvAnnotationsInvalidateDoc(docId){
   annRebuildPaint();
   annUpdateBadge();
   annRenderPanelList();
+  annRenderMarkers();
 }
 function annWireEvents(){
   $("#annToggle").addEventListener("click", () => annTogglePanel());
@@ -1605,8 +1647,8 @@ function annWireEvents(){
       if(root) anchor = annAnchorFromSelection(root, window.getSelection());
     }
     if(!t || !anchor){ hideAnnPropose(); return; }
-    const r = e.currentTarget.getBoundingClientRect();
-    annOpenEditor(t, anchor, { left: r.left, top: r.top, bottom: r.bottom });
+    // One click, one highlight of the default color: no dialog to dismiss.
+    void annCreateFromSelection(anchor);
   });
   // Click-away dismisses the proposal button (pointerdown fires before the
   // selection collapses, so it catches every other click).
@@ -1664,6 +1706,7 @@ function annWireEvents(){
     const editor = $("#annEditor");
     if(editor && !editor.hidden) annCloseEditor();
     hideAnnPropose();
+    annRenderMarkers(); // reflow can move lines; ranges stay valid, just reposition
   });
   window.addEventListener("scroll", () => {
     const editor = $("#annEditor");

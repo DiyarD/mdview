@@ -254,22 +254,34 @@ document never writes to it.
 ## Highlights and notes
 
 Select any passage in a rendered document and a small highlighter button
-appears just below the caret — nothing else appears. Click it and a minimal
-palette opens: five color circles. Click a color and you are done. Icons or
-click-away, never a modal. Annotations are always stored separately from the
-document — highlighting never edits the markdown, not in the file, not in
-the database blob.
+appears just below the caret — nothing else. One click stores a
+default-colored highlight: no dialog, nothing to dismiss. Click the
+highlight again and a minimal palette row opens: five color circles, a
+rainbow picker, a pencil, a trash icon. Annotations are always stored
+separately from the document — highlighting never edits the markdown, not in
+the file, not in the database blob.
 
-- **One click to highlight** — in the collapsed palette each circle applies
-  immediately: highlight the selection, or recolor an existing one. No
-  dialog, no confirm, nothing to dismiss.
-- **Notes on demand** — a pencil circle expands the palette into a text
-  area with **Save**/**Cancel** (and **Delete**, two-click confirm, for an
-  existing note). Opening a stored highlight opens straight into this view.
-- **Custom colors** — a rainbow circle opens a color picker that redefines
-  the currently selected slot for the whole app. Annotations are stored as
-  slot names; your custom hexes persist in `prefs.json`, and every highlight
-  in that slot repaints.
+- **One click to highlight** — the proposal button stores the highlight
+  instantly in the most recently used color. Clicking the highlight reopens
+  the palette: a circle switch recolors with one click, **click-away or
+  <kbd>Escape</kbd>** dismisses it, there is nothing to Save.
+- **Notes without a save button** — the pencil expands a text area whose
+  edits auto-save with the same debounce the welcome-screen search uses.
+  There is no Cancel and no Save; closing the editor flushes any pending
+  text first. Highlights that carry a note grow a faint marker badge at
+  the end of the passage — non-intrusive, but unmistakable.
+- **Delete with the icon** — the trash icon in the palette row needs two
+  clicks to confirm (first arms, second within 3s deletes), same pattern
+  as every destructive action in the app.
+- **Layers stack** — highlights paint with translucent colors, so
+  overlapping highlights composite over each other: the same color stacks
+  deeper, different colors mix. Layering is inherent to the paint system,
+  not a mode.
+- **Custom colors, per theme** — light and dark each keep their own five
+  slots, tuned for their background. The rainbow circle redefines the active
+  slot for the current theme only; annotations store slot names; both
+  palettes persist in `prefs.json` and every highlight in the edited slot
+  repaints instantly.
 - **Identity first, ink second** — highlighting a document that was never
   saved automatically saves it to the internal store, so the highlight always
   has a stable document to hang off. Annotating is the one action that writes
@@ -295,8 +307,8 @@ the database blob.
   review** chip. Click one to jump to it; its motion honors
   prefers-reduced-motion.
 - **Painted natively** — highlights paint with the CSS Custom Highlight API,
-  so the rendered HTML is never rewritten, duplicated or wrapped. Delete is
-  available from the editor with the same two-click confirm used elsewhere.
+  so the rendered HTML is never rewritten, duplicated or wrapped, and the
+  translucent colors composite naturally where highlights overlap.
 
 ---
 
@@ -590,10 +602,11 @@ stateful fake document store behind the IPC boundary, then drives headless
 Chrome through the flows the user actually performs: paste a document, save it
 with the Save button, double-click a tab to rename it (Enter commits), open
 **Saved documents** on the empty tab, search (debounced) and click the result,
-annotate the unsaved tab (propose button → collapsed palette → one click to
-save; the document auto-saves first), expand the note with the pencil, edit
-and delete through the real UI, and verifies the similarity offer swaps in
-the saved document only on explicit **Open saved**. The anchor resolver is exercised
+annotate the unsaved tab (propose button stores the highlight instantly; the
+document auto-saves first), expand the note with the pencil, debounced
+auto-save, the note marker on noted highlights, palette-layer stacking,
+edit and delete through the real UI, and verifies the similarity offer swaps
+in the saved document only on explicit **Open saved**. The anchor resolver is exercised
 directly against the edge cases that break naive anchoring: inserted text,
 deleted passages, duplicate quotes with and without distinguishable context,
 emoji offsets, document edges. It exits non-zero if any of that breaks.
