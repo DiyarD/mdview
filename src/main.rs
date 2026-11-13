@@ -8,7 +8,8 @@ use std::borrow::Cow;
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use serde_json::json;
@@ -170,6 +171,10 @@ fn main() {
             if url.contains("/asset/") {
                 return false;
             }
+            // Internal "link might be an image" handler URL: never navigate.
+            if url.contains("/fetch?url=") {
+                return false;
+            }
             // Local asset/doc links (http://mdview.localhost/local/... —
             // wry's workaround form, plus legacy mdview://). MUST be checked
             // before the http branch below, or they'd open in the browser.
@@ -236,7 +241,9 @@ fn main() {
         .with_asynchronous_custom_protocol("mdview".into(), |_id, request, responder| {
             let uri = request.uri().to_string();
             std::thread::spawn(move || {
-                let r = serve_app_asset(&uri).unwrap_or_else(|| serve_local_media(&uri));
+                let r = serve_app_asset(&uri)
+                    .or_else(|| serve_remote_media(&uri))
+                    .unwrap_or_else(|| serve_local_media(&uri));
                 responder.respond(r);
             });
         })
@@ -379,6 +386,7 @@ fn render_markdown_to_html(md: &str, base: Option<&str>) -> String {
     html::push_html(&mut out, parser);
     let out = sanitize_html(out);
     let out = resolve_media_urls(out, base);
+    let out = upgrade_image_links(out);
     let out = ensure_video_controls(out);
     wrap_tables(out)
 }
@@ -658,7 +666,18 @@ fn resolve_media_urls(html: String, base: Option<&str>) -> String {
                 let resolved = if raw.starts_with('#') {
                     raw
                 } else {
-                    resolve_media_ref(&raw, base)
+                    let resolved = resolve_media_ref(&raw, base);
+                    // Every remote image goes through the app's fetch handler
+                    // (Chrome TLS/HTTP2 impersonation, content-type check) —
+                    // extensionless and Cloudflare-gated URLs included. This
+                    // also avoids double-loading: WebView2 only ever sees the
+                    // mdview.localhost URL, never the original.
+                    let is_src = attr == b"src=\"".as_slice() || attr == b"src='".as_slice();
+                    if is_src && is_http_url(&resolved) && !is_mdview_serve(&resolved) {
+                        to_fetch_url(&resolved)
+                    } else {
+                        resolved
+                    }
                 };
                 out.extend_from_slice(attr);
                 out.extend_from_slice(resolved.as_bytes());
@@ -779,6 +798,452 @@ fn media_response(status: u16, ctype: &str, body: Vec<u8>) -> http::Response<Cow
         .header("Access-Control-Allow-Origin", "*")
         .body(Cow::Owned(body))
         .unwrap()
+}
+
+/// True for URLs the app serves itself (assets, local media, remote fetch).
+/// Never re-route those into the fetch handler (that would wrap a fetch URL
+/// inside another fetch URL).
+fn is_mdview_serve(s: &str) -> bool {
+    s.starts_with("http://mdview.localhost/") || s.starts_with("mdview.localhost/")
+}
+
+/* ===== Remote images: Chrome TLS/HTTP2 impersonation via wreq =====
+   Remote <img> targets are rewritten to http://mdview.localhost/fetch?url=…
+   and WebView2 only ever sees that URL (no double loading). The handler
+   below fetches the original with wreq (BoringSSL, Chrome emulation) — this
+   is what lets extensionless and Cloudflare-gated image URLs through —
+   verifies the response really is an image, and streams it back.
+
+   Two shared singletons instead of per-request state: one tokio runtime
+   (2 worker threads) and two clients (30s for images, 4s for link probes).
+   wreq is async-only; block_on() from the protocol-handler threads is what
+   wry's background thread pool calls us on. */
+fn remote_runtime() -> &'static tokio::runtime::Runtime {
+    static REMOTE_RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
+    REMOTE_RT.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .expect("remote fetch tokio runtime must build")
+    })
+}
+
+fn remote_client() -> Result<&'static wreq::Client, String> {
+    static REMOTE_CLIENT: OnceLock<wreq::Client> = OnceLock::new();
+    if let Some(c) = REMOTE_CLIENT.get() {
+        return Ok(c);
+    }
+    let c = wreq::Client::builder()
+        .emulation(wreq_util::Emulation::Chrome147)
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("client build error: {e}"))?;
+    Ok(REMOTE_CLIENT.get_or_init(|| c))
+}
+
+fn probe_client() -> Result<&'static wreq::Client, String> {
+    static PROBE_CLIENT: OnceLock<wreq::Client> = OnceLock::new();
+    if let Some(c) = PROBE_CLIENT.get() {
+        return Ok(c);
+    }
+    let c = wreq::Client::builder()
+        .emulation(wreq_util::Emulation::Chrome147)
+        .timeout(Duration::from_secs(4))
+        .build()
+        .map_err(|e| format!("client build error: {e}"))?;
+    Ok(PROBE_CLIENT.get_or_init(|| c))
+}
+
+/// Send a GET/HEAD with manual redirect handling: up to 5 hops, each joined
+/// against the previous URL (relative Location headers included). wreq does
+/// not follow redirects out of the box, and image CDNs love them.
+async fn send_with_redirects(client: &wreq::Client, url: &str, head: bool) -> Result<wreq::Response, String> {
+    let mut current = url.to_string();
+    for _ in 0..6 {
+        let resp = if head {
+            client.head(&current).send().await
+        } else {
+            client.get(&current).send().await
+        }
+        .map_err(|e| format!("request failed: {e}"))?;
+        let status = resp.status();
+        if status.as_u16() >= 300 && status.as_u16() < 400 {
+            let Some(loc) = resp.headers().get("location").and_then(|v| v.to_str().ok()) else {
+                return Ok(resp);
+            };
+            let next = url::Url::parse(&current)
+                .and_then(|base| base.join(loc))
+                .map(|u| u.to_string())
+                .map_err(|e| format!("redirect join failed: {e}"))?;
+            current = next;
+            continue;
+        }
+        return Ok(resp);
+    }
+    Err("too many redirects".to_string())
+}
+
+/// Fetch a remote image with Chrome impersonation. Single GET (redirects
+/// aside) — the response headers are checked *before* the body is read, so a
+/// non-image response is rejected without downloading anything.
+fn fetch_remote_image(url: &str) -> Result<(String, Vec<u8>), String> {
+    let client = remote_client()?;
+    remote_runtime().block_on(async move {
+        let resp = send_with_redirects(client, url, false).await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(format!("HTTP {status}"));
+        }
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if !ctype.starts_with("image/") {
+            return Err(format!("not an image: {ctype}"));
+        }
+        if let Some(len) = resp
+            .headers()
+            .get("content-length")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+        {
+            if len > MAX_MEDIA_BYTES {
+                return Err(format!("too large: {len} bytes"));
+            }
+        }
+        let bytes = resp.bytes().await.map_err(|e| format!("read failed: {e}"))?;
+        if bytes.len() as u64 > MAX_MEDIA_BYTES {
+            return Err(format!("too large: {} bytes", bytes.len()));
+        }
+        let mime = ctype.split(';').next().unwrap_or(&ctype).trim().to_string();
+        Ok((mime, bytes.to_vec()))
+    })
+}
+
+/// Create a fetch URL for the protocol handler.
+fn to_fetch_url(url: &str) -> String {
+    format!("http://mdview.localhost/fetch?url={}", percent_encode_path(url))
+}
+
+/// Decode a fetch URL to get the original URL.
+fn decode_fetch_url(url: &str) -> Option<String> {
+    let idx = url.find("/fetch?url=")?;
+    let encoded = &url[idx + "/fetch?url=".len()..];
+    let encoded = encoded.split(['?', '#']).next().unwrap_or(encoded);
+    if encoded.is_empty() {
+        return None;
+    }
+    Some(percent_decode(encoded))
+}
+
+/// Serve remote media from a /fetch?url=... URL. Any failure — DNS, HTTP,
+/// wrong content-type, too large — returns 404, never a partially served
+/// file and never a guess.
+fn serve_remote_media(uri: &str) -> Option<http::Response<Cow<'static, [u8]>>> {
+    let fail = || media_response(404, "text/plain", b"not found".to_vec());
+    let url = decode_fetch_url(uri)?;
+    match fetch_remote_image(&url) {
+        Ok((ctype, bytes)) => Some(media_response(200, &ctype, bytes)),
+        Err(_) => Some(fail()),
+    }
+}
+
+/// HEAD-probe an ambiguous link: Some(content-type) when the server answers
+/// image/*. Network access is skipped entirely when LINK_PROBE_NETWORK is
+/// false (unit tests), and a probe failure/timeout means "keep the link".
+static LINK_PROBE_NETWORK: AtomicBool = AtomicBool::new(true);
+
+fn probe_remote_link(url: &str) -> Option<String> {
+    if !LINK_PROBE_NETWORK.load(Ordering::Relaxed) {
+        return None;
+    }
+    let client = probe_client().ok()?;
+    remote_runtime().block_on(async move {
+        let resp = send_with_redirects(client, url, true).await.ok()?;
+        let ctype = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ctype.starts_with("image/") {
+            Some(ctype.split(';').next().unwrap_or("").trim().to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// Markdown links whose target *is* an image must render as one (extension
+/// counts for `.png`-style URLs; otherwise a HEAD content-type probe decides).
+/// Everything else stays a link. Media wrappers (a link around an <img> or
+/// <video>) are never upgraded — that markup is deliberate.
+#[derive(Clone, Copy, PartialEq)]
+enum LinkKind {
+    Image,
+    NotImage,
+    Unknown,
+}
+
+fn link_kind_of(url: &str) -> LinkKind {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let last = path.rsplit('/').next().unwrap_or(path);
+    match ext_of(last).as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "svg" | "bmp" | "ico" | "avif" => LinkKind::Image,
+        "html" | "htm" | "xhtml" | "pdf" | "mp4" | "m4v" | "webm" | "mov" | "ogv" | "mp3" | "wav"
+        | "ogg" | "zip" | "tar" | "gz" | "rar" | "7z" | "exe" | "msi" | "css" | "js" | "mjs" | "cjs"
+        | "json" | "xml" | "csv" | "md" | "markdown" | "txt" | "yaml" | "yml" | "toml" | "wasm"
+        | "woff" | "woff2" | "ttf" | "otf" | "dmg" | "iso" | "apk" | "deb" | "rpm" => {
+            LinkKind::NotImage
+        }
+        _ => LinkKind::Unknown,
+    }
+}
+
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for ch in s.chars() {
+        if ch == '<' {
+            in_tag = true;
+            continue;
+        }
+        if ch == '>' {
+            in_tag = false;
+            continue;
+        }
+        if !in_tag {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+/// Decode HTML entities in an attribute value. pulldown-cmark escapes `&`
+/// as `&amp;` in emitted attributes; consumers that want the raw URL (probes,
+/// to_fetch_url) must unescape, or `&amp;` lands inside the query string.
+fn html_unescape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'&' {
+            if let Some(end) = s[i..].find(';') {
+                let e = i + end;
+                if e - i <= 10 {
+                    let entity = &s[i + 1..e];
+                    let repl = match entity {
+                        "amp" => Some('&'),
+                        "lt" => Some('<'),
+                        "gt" => Some('>'),
+                        "quot" => Some('"'),
+                        "apos" => Some('\''),
+                        _ => entity.strip_prefix('#').and_then(|num| {
+                            let n = if let Some(hex) = num.strip_prefix(['x', 'X']) {
+                                u32::from_str_radix(hex, 16).ok()
+                            } else {
+                                num.parse::<u32>().ok()
+                            }?;
+                            char::from_u32(n)
+                        }),
+                    };
+                    if let Some(c) = repl {
+                        out.push(c);
+                        i = e + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        let next = s[i..].find('&').map(|r| i + r).unwrap_or(s.len());
+        out.push_str(&s[i..next]);
+        i = next;
+    }
+    out
+}
+
+/// Find `name="value"` (or `name='value'`) inside a single HTML tag,
+/// case-insensitive on the attribute name. The name must not be a suffix of
+/// a longer attribute (data-href is not href).
+fn find_attr_value(tag: &str, name: &str) -> Option<String> {
+    let low = tag.to_ascii_lowercase();
+    let bytes = low.as_bytes();
+    let name_char = |c: u8| c.is_ascii_alphanumeric() || c == b'-' || c == b'_' || c == b':';
+    let mut from = 0;
+    while let Some(rel) = low[from..].find(name) {
+        let at = from + rel;
+        if at > 0 && name_char(bytes[at - 1]) {
+            from = at + name.len();
+            continue;
+        }
+        let mut j = at + name.len();
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
+            j += 1;
+        }
+        if bytes.get(j) != Some(&b'=') {
+            from = at + name.len();
+            continue;
+        }
+        j += 1;
+        while j < bytes.len() && matches!(bytes[j], b' ' | b'\t' | b'\n' | b'\r') {
+            j += 1;
+        }
+        let quote = *bytes.get(j)?;
+        if quote != b'"' && quote != b'\'' {
+            from = at + name.len();
+            continue;
+        }
+        let value_start = j + 1;
+        let value_len = low[value_start..].find(quote as char)?;
+        return Some(html_unescape(&tag[value_start..value_start + value_len]));
+    }
+    None
+}
+
+/// One `<a ...>inner</a>` occurrence in the rendered HTML.
+struct AnchorOccurrence {
+    /// Byte range of the whole element (from '<' of the anchor to "</a>").
+    start: usize,
+    end: usize,
+    href: String,
+    inner: String,
+}
+
+fn find_anchors(html: &str) -> Vec<AnchorOccurrence> {
+    let b = html.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 2 < b.len() {
+        if b[i] == b'<'
+            && b[i + 1] == b'a'
+            && matches!(b.get(i + 2), Some(b' ' | b'\t' | b'\n' | b'\r' | b'>'))
+        {
+            // End of the opening tag: first unquoted '>'.
+            let mut j = i + 2;
+            let mut quote: u8 = 0;
+            while j < b.len() {
+                let c = b[j];
+                if quote != 0 {
+                    if c == quote {
+                        quote = 0;
+                    }
+                } else if c == b'"' || c == b'\'' {
+                    quote = c;
+                } else if c == b'>' {
+                    break;
+                }
+                j += 1;
+            }
+            if j >= b.len() {
+                break;
+            }
+            let tag_end = j + 1;
+            let tag = &html[i..tag_end];
+            // Anchors don't nest in HTML5: the first "</a>" closes this one.
+            let Some(close_rel) = html[tag_end..].find("</a>") else {
+                i = tag_end;
+                continue;
+            };
+            let inner = &html[tag_end..tag_end + close_rel];
+            let href = find_attr_value(tag, "href").unwrap_or_default();
+            out.push(AnchorOccurrence {
+                start: i,
+                end: tag_end + close_rel + "</a>".len(),
+                href,
+                inner: inner.to_string(),
+            });
+            i = tag_end + close_rel + "</a>".len();
+            continue;
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Upgrade `<a href="…">text</a>` to `<img>` when the target is an image.
+/// Probes happen in parallel on the shared runtime, capped at 16 ambiguous
+/// URLs per document; each probe has a 4s ceiling inside probe_client().
+/// On any doubt the anchor is left alone — never guess.
+fn upgrade_image_links(html: String) -> String {
+    let anchors = find_anchors(&html);
+    if anchors.is_empty() {
+        return html;
+    }
+    // Decide per anchor.
+    let mut decisions: Vec<Option<bool>> = Vec::with_capacity(anchors.len()); // true = upgrade
+    let mut probe_idx: Vec<usize> = Vec::new();
+    for a in &anchors {
+        let inner_too_big = a.inner.len() > 400 || a.inner.contains('<');
+        if !is_http_url(&a.href) || inner_too_big {
+            decisions.push(Some(false));
+            continue;
+        }
+        match link_kind_of(&a.href) {
+            LinkKind::Image => {
+                decisions.push(Some(true));
+            }
+            LinkKind::NotImage => {
+                decisions.push(Some(false));
+            }
+            LinkKind::Unknown => {
+                decisions.push(None);
+                probe_idx.push(decisions.len() - 1);
+            }
+        }
+    }
+    // Ambiguous URLs: probe in parallel, capped.
+    let probes: Vec<(usize, &str)> = probe_idx
+        .iter()
+        .take(16)
+        .map(|&idx| (idx, anchors[idx].href.as_str()))
+        .collect();
+    let mut results: std::collections::HashMap<usize, bool> =
+        std::collections::HashMap::with_capacity(probes.len());
+    if !probes.is_empty() {
+        let mut handles = Vec::with_capacity(probes.len());
+        for (idx, url) in probes {
+            let url = url.to_string();
+            handles.push(std::thread::spawn(move || (idx, probe_remote_link(&url))));
+        }
+        for h in handles {
+            if let Ok((idx, outcome)) = h.join() {
+                results.insert(idx, outcome.is_some());
+            }
+        }
+    }
+    for &idx in &probe_idx {
+        decisions[idx] = Some(results.get(&idx).copied().unwrap_or(false));
+    }
+    // Rebuild the document in one pass over segments.
+    let mut out = String::with_capacity(html.len() + 64);
+    let mut cursor = 0usize;
+    for (idx, a) in anchors.iter().enumerate() {
+        if decisions[idx] != Some(true) {
+            continue;
+        }
+        out.push_str(&html[cursor..a.start]);
+        let alt = strip_tags(&a.inner);
+        let alt = alt.trim();
+        let alt: String = alt
+            .chars()
+            .take(160)
+            .map(|c| if c == '"' { '\'' } else { c })
+            .collect();
+        out.push_str("<img src=\"");
+        out.push_str(&to_fetch_url(&a.href));
+        out.push_str("\" alt=\"");
+        out.push_str(&alt);
+        out.push_str("\">");
+        cursor = a.end;
+    }
+    if cursor == 0 {
+        return html;
+    }
+    out.push_str(&html[cursor..]);
+    out
 }
 
 /// Serve the app's own vendored assets (KaTeX: JS, CSS, fonts) over the same
@@ -1915,6 +2380,98 @@ mod tests {
         let html = render_markdown_to_html("[t](#sec)\n\n![a](./x.png)", None);
         assert!(html.contains("#sec"), "{}", html);
         assert!(html.contains("./x.png"), "{}", html); // no base: untouched
+    }
+
+    #[test]
+    fn remote_img_src_rewrites_to_fetch_handler() {
+        let html = render_markdown_to_html("![d](https://x.io/i.png)", None);
+        assert!(html.contains("src=\"http://mdview.localhost/fetch?url=https://x.io/i.png\""), "{}", html);
+        assert!(!html.contains("src=\"https://x.io/i.png\""), "{}", html);
+    }
+
+    #[test]
+    fn remote_fetch_url_roundtrips() {
+        let url = "https://x.io/serve?domain=https://a.b/c&sz=32#frag";
+        assert_eq!(decode_fetch_url(&to_fetch_url(url)).as_deref(), Some(url));
+    }
+
+    #[test]
+    fn mdview_serve_urls_are_not_double_wrapped() {
+        assert!(is_mdview_serve("http://mdview.localhost/fetch?url=x"));
+        assert!(is_mdview_serve("mdview.localhost/local/C:/a.png"));
+        assert!(!is_mdview_serve("https://mdview.localhost.evil/x.png"));
+        let html = render_markdown_to_html("![a](http://mdview.localhost/local/C:/pics/b.jpg)", None);
+        assert!(html.contains("src=\"http://mdview.localhost/local/C:/pics/b.jpg\""), "{}", html);
+    }
+
+    #[test]
+    fn link_to_image_extension_upgrades_to_img() {
+        let html = render_markdown_to_html("[pic](https://x.io/i.png)", None);
+        assert!(html.contains("<img src=\"http://mdview.localhost/fetch?url=https://x.io/i.png\""), "{}", html);
+        assert!(!html.contains("<a href=\"https://x.io/i.png\""), "{}", html);
+    }
+
+    #[test]
+    fn link_to_known_non_image_stays_a_link() {
+        let html = render_markdown_to_html("[doc](https://x.io/f.pdf)", None);
+        assert!(html.contains("<a href=\"https://x.io/f.pdf\""), "{}", html);
+        assert!(!html.contains("<img"), "{}", html);
+    }
+
+    #[test]
+    fn ambiguous_link_stays_a_link_without_probe() {
+        // Probe disabled: no network, no upgrade, never guess.
+        LINK_PROBE_NETWORK.store(false, Ordering::Relaxed);
+        let html = render_markdown_to_html("[maybe](https://x.io/serve?domain=https://a.b&sz=32)", None);
+        LINK_PROBE_NETWORK.store(true, Ordering::Relaxed);
+        assert!(html.contains("<a href=\"https://x.io/serve?domain=https://a.b&amp;sz=32\""), "{}", html);
+        assert!(!html.contains("<img"), "{}", html);
+    }
+
+    #[test]
+    fn link_wrapper_around_img_is_not_upgraded() {
+        // A link wrapping an image is deliberate markup (media anchors).
+        let md = "[![thumb](https://x.io/t.png)](https://x.io/clip)";
+        let html = render_markdown_to_html(md, None);
+        assert!(html.contains("<a href=\"https://x.io/clip\""), "{}", html);
+        assert!(html.contains("<img"), "{}", html); // the inner image stays an image
+    }
+
+    #[test]
+    fn probe_head_helper_respects_flag() {
+        LINK_PROBE_NETWORK.store(false, Ordering::Relaxed);
+        assert_eq!(probe_remote_link("https://x.io/anything"), None);
+        LINK_PROBE_NETWORK.store(true, Ordering::Relaxed);
+    }
+
+    // End-to-end against the real network: excluded from the default suite so
+    // CI never depends on connectivity. Run explicitly with:
+    //   cargo test --bin mdview remote_image_e2e -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn remote_image_e2e() {
+        let favicon = "https://www.google.com/s2/favicons?domain=https://www.nice.org.uk&sz=32";
+        let (ctype, bytes) = fetch_remote_image(favicon).expect("extensionless favicon must fetch");
+        assert!(ctype.starts_with("image/"), "{ctype}");
+        assert!(!bytes.is_empty());
+        println!("favicon: {ctype}, {} bytes", bytes.len());
+
+        let raw = "https://raw.githubusercontent.com/DiyarD/mdview/refs/heads/master/docs/screenshots/01-reading-light.png";
+        let (ctype, bytes) = fetch_remote_image(raw).expect("raw github image must fetch");
+        assert!(ctype.starts_with("image/"), "{ctype}");
+        assert!(bytes.len() > 1024, "expected a real PNG, got {} bytes", bytes.len());
+        println!("raw github png: {ctype}, {} bytes", bytes.len());
+    }
+
+    #[test]
+    #[ignore]
+    fn remote_link_to_image_upgrades_e2e() {
+        // The user's exact case: a markdown link whose target is an image,
+        // with no image extension.
+        let md = "[image](https://www.google.com/s2/favicons?domain=https://www.nice.org.uk&sz=32)";
+        let html = render_markdown_to_html(md, None);
+        println!("{html}");
+        assert!(html.contains("<img src=\"http://mdview.localhost/fetch?url="), "{html}");
     }
 
     #[test]

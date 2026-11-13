@@ -17,6 +17,12 @@ serde_json = "1"
 ureq = { version = "3", default-features = false, features = ["rustls", "gzip"] }
 http = "1"
 url = "2"
+# Remote images: fetched by the app with Chrome TLS/HTTP2 impersonation so
+# extensionless and Cloudflare-gated image URLs load. BoringSSL -> btls-sys
+# needs NASM at *build* time only; nothing of it ships in the app binary.
+tokio = { version = "1", features = ["rt-multi-thread"] }
+wreq = "0.16"
+wreq-util = "0.2"
 # Internal document database: compressed markdown + FTS5 search + SimHash.
 # Bundled so the app ships one SQLite build and never depends on the OS copy.
 rusqlite = { version = "0.42", features = ["bundled"] }

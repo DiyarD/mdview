@@ -95,7 +95,9 @@ Markdown is rendered by [`pulldown-cmark`](https://github.com/pulldown-cmark/pul
 in Rust with tables, footnotes, strikethrough, task lists, heading attributes,
 YAML front matter and math all enabled — then sanitised and post-processed.
 Every renderer library is vendored, gzipped into the executable and inflated on
-demand, so **there is no CDN and no network dependency anywhere**.
+demand, so **the viewer itself has no CDN and no network dependency** — it stays
+fully usable offline. The one exception is deliberate: remote images referenced
+by the document are fetched (see below), never the viewer itself.
 
 ### Code
 
@@ -164,6 +166,19 @@ renders its own images and `<video>` blocks.
 Local files are streamed through an internal protocol with a **100 MB ceiling**,
 served only for a fixed allowlist of image, video and audio extensions. Markdown
 files are never served through it — they are opened as tabs instead.
+
+Remote images work too, including the extensionless ones (paste an OpenAI
+CDN URL or a Google favicon proxy link — both are served as images). The app
+fetches them with **Chrome TLS/HTTP2 impersonation** (wreq + BoringSSL), checks
+the response really is an image before streaming a single byte to the view, and
+rewrites every remote `<img src>` to the internal handler, so WebView2 never
+hits the network directly and nothing is ever fetched twice. If a markdown
+**link** points at an image (e.g. `[image](https://…favicons?domain=…&sz=32)`),
+it is probed with a cheap `HEAD` content-type check and promoted to an `<img>`
+when the server confirms `image/*` — if the probe fails or says otherwise, the
+link stays a normal link. Media wrappers (a link around a thumbnail) are never
+touched. All probes are capped at 16 per document, 4 seconds each, run in
+parallel, and can never block longer than that on the first render.
 
 Video and audio work the same way: a `<video>` or `<audio>` element is given
 `controls`, and a markdown link to an `.mp4`/`.mp3` wrapped around a thumbnail is
@@ -410,7 +425,10 @@ mdview does not.
 - **One native window, one shared WebView2.** The Edge engine is already on
   Windows, so nothing is bundled. Tabs are lightweight JS views inside it, not
   separate webviews.
-- **No tokio, no async runtime.** Blocking `std` threads for fetch and read.
+- **One tokio runtime, two workers.** The only async citizen is the remote
+  image fetcher (wreq is async-only; BoringSSL underneath). It is built lazily,
+  shares one 30s client and one 4s HEAD-probe client, and serves the protocol
+  handler's threads via `block_on`; everything else stays blocking `std` threads.
 - **Renderer libraries are released.** When no open tab contains rendered math or
   a diagram, the inflated KaTeX/Mermaid bundle is dropped, so a long reading
   session returns to baseline instead of holding ~2.5 MB forever.
@@ -464,8 +482,19 @@ this is **Windows-only as written**.
 ```powershell
 cargo run                                          # debug
 cargo build --release                              # -> target\release\mdview.exe
-cargo test --release                               # 50 tests + 1 doc-fixture test
+cargo test --release                               # 58 tests + 1 fixture test (+ 3 network E2Es, ignored)
 ```
+
+Remote image fetching links the app against BoringSSL (via `wreq`). That is
+**build-time only** and needs two tools present when you compile, both free
+and discrete:
+
+- **NASM** (e.g. the portable ZIP from nasm.us) on PATH — nothing else.
+- **libclang** — `pip download libclang` gives a wheel whose `libclang.dll`
+  you point `LIBCLANG_PATH` at (that is all bindgen needs).
+
+Neither ships in the binary in any installable form; BoringSSL itself links
+statically into the executable.
 
 The project has no build script and no code generation. Vendored renderer assets
 are committed **gzipped**, because that is the form the binary embeds; if you ever
@@ -491,8 +520,8 @@ python tools/vendor-assets.py
      ▼                              ▼
   WebView2 IPC                 mdview:// handler
   render · read_file           KaTeX · Mermaid · hljs
-  fetch_url · pick_file        local media (allowlisted)
-  clipboard_files · prefs
+  fetch_url · pick_file        remote images (Chrome impersonation,
+  clipboard_files · prefs      image/* verified) · local media
   documents → SQLite store     compressed · FTS5 search · SimHash
      │
      ▼
