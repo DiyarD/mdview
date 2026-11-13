@@ -1450,6 +1450,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+
     #[test]
     fn fts5_trigram_available() {
         let s = store();

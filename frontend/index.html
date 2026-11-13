@@ -415,12 +415,22 @@
        quote bars, code blocks) still honours the reader's choice. */
     .markdown-body .mermaid svg{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   }
-  /* Highlights & notes: a right-hand reading panel and an inline editor —
-     same whisper-not-modal philosophy as the similarity banner. */
+  /* Highlights & notes: a small propose button under the selection, a
+     right-hand reading panel and a minimal inline editor. Whisper, not
+     modal — chrome appears only when it can act. */
   #annToggle{ display:inline-flex; align-items:center; gap:4px; }
   #annToggle svg{ display:block; width:15px; height:15px; }
   #annToggle[aria-pressed="true"]{ color:var(--accent); }
   #annCount{ display:inline-block; color:var(--quote); font-size:10px; font-variant-numeric:tabular-nums; }
+  #annPropose{ position:fixed; z-index:130; width:34px; height:34px; padding:0;
+    display:inline-flex; align-items:center; justify-content:center;
+    background:var(--card); color:var(--fg); border:1px solid var(--border);
+    border-radius:50%; box-shadow:var(--shadow); cursor:pointer;
+    transition:transform .12s ease, border-color .12s ease; }
+  #annPropose[hidden]{ display:none !important; }
+  #annPropose:hover{ border-color:var(--quote-bar); transform:scale(1.08); }
+  #annPropose svg{ width:17px; height:17px; display:block; }
+  @media (prefers-reduced-motion: reduce){ #annPropose{ transition:none; } }
   #annPanel{ position:fixed; z-index:120; top:calc(var(--bar-h) + 10px); right:12px; bottom:14px;
     width:min(340px,calc(100vw - 24px)); display:flex; flex-direction:column;
     color:var(--fg); background:color-mix(in srgb, var(--card) 96%, transparent);
@@ -448,15 +458,22 @@
     background:rgba(198,124,43,.14); color:#b0722a; font:600 9.5px var(--sans);
     letter-spacing:.04em; text-transform:uppercase; }
   html.dark .ann-orphan{ color:#d8a25a; }
-  #annEditor{ position:fixed; z-index:140; width:min(330px,calc(100vw - 20px)); padding:12px;
+  #annEditor{ position:fixed; z-index:140; width:auto; max-width:min(330px,calc(100vw - 20px)); padding:10px 12px;
     background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:13px;
     box-shadow:0 8px 28px rgba(0,0,0,.16); font:12px var(--sans); }
-  .ann-editor-quote{ font:12px/1.55 var(--serif); max-height:76px; overflow:auto; margin:0 0 10px;
-    padding:8px 9px; background:var(--drop); border-radius:8px; overflow-wrap:anywhere; }
-  .ann-colors{ display:flex; align-items:center; gap:9px; margin:8px 0 10px; }
+  .ann-colors{ display:flex; align-items:center; gap:9px; margin:2px 0; }
   .ann-color{ width:21px; height:21px; border-radius:50%; border:2px solid transparent;
-    outline:1px solid var(--border); cursor:pointer; padding:0; }
-  .ann-color[aria-pressed="true"]{ outline:2px solid var(--accent); outline-offset:2px; }
+    outline:1px solid var(--border); cursor:pointer; padding:0; transition:transform .12s ease; }
+  .ann-color:hover{ transform:scale(1.15); }
+  .ann-color[aria-checked="true"]{ outline:2px solid var(--accent); outline-offset:2px; }
+  .ann-picker{ background:conic-gradient(#d95050,#e0a33f,#6db84c,#4fa3c4,#7a6fd0,#b45bb4,#d95050); position:relative; }
+  .ann-picker::after{ content:""; display:block; width:7px; height:7px; margin:auto;
+    border-radius:50%; background:var(--card); opacity:.92; }
+  .ann-pencil{ display:inline-flex; align-items:center; justify-content:center; background:transparent; }
+  .ann-pencil svg{ width:12px; height:12px; display:block; }
+  .ann-pencil[aria-pressed="true"]{ outline:2px solid var(--accent); outline-offset:2px; }
+  .ann-color-input{ position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+  .ann-note-wrap{ margin-top:10px; }
   .ann-textarea{ display:block; width:100%; min-height:66px; resize:vertical; box-sizing:border-box;
     background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:8px;
     padding:8px; font:12px/1.5 var(--sans); outline-offset:2px; }
@@ -464,16 +481,6 @@
   .ann-editor-actions{ display:flex; align-items:center; justify-content:flex-end; gap:7px; margin-top:10px; }
   .ann-editor-actions .btn.danger{ color:#a64c40; }
   .ann-editor-actions .btn.danger.armed{ background:rgba(166,76,64,.14); border-color:#a64c40; }
-  ::highlight(mdv-ann-yellow){ background:rgba(239,197,88,.58); color:inherit; }
-  ::highlight(mdv-ann-green){ background:rgba(137,184,130,.52); color:inherit; }
-  ::highlight(mdv-ann-blue){ background:rgba(123,171,218,.48); color:inherit; }
-  ::highlight(mdv-ann-pink){ background:rgba(220,143,162,.48); color:inherit; }
-  ::highlight(mdv-ann-purple){ background:rgba(174,151,220,.5); color:inherit; }
-  html.dark ::highlight(mdv-ann-yellow){ background:rgba(185,139,46,.62); }
-  html.dark ::highlight(mdv-ann-green){ background:rgba(90,142,88,.58); }
-  html.dark ::highlight(mdv-ann-blue){ background:rgba(76,127,175,.62); }
-  html.dark ::highlight(mdv-ann-pink){ background:rgba(166,88,109,.62); }
-  html.dark ::highlight(mdv-ann-purple){ background:rgba(123,96,174,.62); }
   @media (max-width:600px){
     #annPanel{ right:8px; top:calc(var(--bar-h) + 8px); bottom:8px; width:min(330px,calc(100vw - 16px)); }
   }
@@ -489,10 +496,11 @@
   <button class="ctl" id="fs" title="Fullscreen (F11)">⛶</button>
   <button class="ctl" id="save" title="Save document (Ctrl+S)" aria-pressed="false" aria-label="Save document"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h7.4L17 7.1V15a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 15Z"/><path d="M7 3v6h6V3M7.5 13h5"/></svg></button>
   <input id="width" type="range" min="620" max="1180" step="10" value="860" title="Reading width — also [ / ] or Alt+Left/Right">
-  <button class="ctl" id="annToggle" title="Highlights and notes (Ctrl+Shift+A)" aria-pressed="false" aria-label="Highlights and notes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12.6 11.9 5.2a1.4 1.4 0 0 1 2 0l1.4 1.4a1.4 1.4 0 0 1 0 2l-7.4 7.4L4 17l.5-4.4Z"/><path d="M9.8 7.3l3.4 3.4"/></svg> <span id="annCount" aria-hidden="true"></span></button>
+  <button class="ctl" id="annToggle" title="Highlights and notes (Ctrl+Shift+A)" aria-pressed="false" aria-label="Highlights and notes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 13.1 9.2 7.3l3.5 3.5-5.8 5.8H3.4z"/><path d="M9.2 7.3 13.1 3.4a1.55 1.55 0 0 1 2.2 0l1.3 1.3a1.55 1.55 0 0 1 0 2.2l-3.9 3.9"/><path d="M2.6 17.6h6.5"/></svg> <span id="annCount" aria-hidden="true"></span></button>
   <button class="ctl" id="theme" title="Toggle light/dark">◐</button>
 </div>
 <div id="views"></div>
+<button id="annPropose" hidden title="Highlight selection" aria-label="Highlight selection"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 13.1 9.2 7.3l3.5 3.5-5.8 5.8H3.4z"/><path d="M9.2 7.3 13.1 3.4a1.55 1.55 0 0 1 2.2 0l1.3 1.3a1.55 1.55 0 0 1 0 2.2l-3.9 3.9"/><path d="M2.6 17.6h6.5"/></svg></button>
 <aside id="annPanel" hidden aria-label="Highlights and notes">
   <div class="ann-head">
     <div>
@@ -538,7 +546,7 @@ let fontScale = 1.0, readWidth = 860, darkMode = null;
 const PREFS_KEY = "mdview:prefs:v1";
 let saveT = null;
 function savePrefs(){
-  const p = { theme: darkMode?"dark":"light", fontScale, readWidth, tocPos: toc.pos };
+  const p = { theme: darkMode?"dark":"light", fontScale, readWidth, tocPos: toc.pos, annColors: { ...annPalette } };
   // localStorage works when opened as a file; ignored (throws) on the
   // opaque with_html origin — the Rust file below is the real store.
   try{ localStorage.setItem(PREFS_KEY, JSON.stringify(p)); }catch(e){}
@@ -554,6 +562,13 @@ function applyPrefsObject(p){
   if(typeof p.fontScale==="number" && p.fontScale>=0.6 && p.fontScale<=2.2){ fontScale = p.fontScale; touched = true; }
   if(typeof p.readWidth==="number" && p.readWidth>=620 && p.readWidth<=1180){ readWidth = p.readWidth; touched = true; }
   if(p.tocPos==="left"||p.tocPos==="right"||p.tocPos==="center"){ setTocPos(p.tocPos); touched = true; }
+  // Highlight palette slots (customized hexes), validated per value.
+  if(p.annColors && typeof p.annColors === "object"){
+    for(const k of Object.keys(ANN_DEFAULT_PALETTE)){
+      const v = p.annColors[k];
+      if(typeof v === "string" && /^#[0-9a-fA-F]{6}$/.test(v.trim())) annPalette[k] = v.trim().toLowerCase();
+    }
+  }
   return touched;
 }
 function loadPrefs(){
@@ -659,6 +674,7 @@ function switchTab(id){
   activeId = id;
   document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active", v.id==="view-"+id));
   const t = tabs.find(x=>x.id===id);
+  hideAnnPropose();
   if(t && t.dirty && t.rendered) renderTab(t); // theme changed while hidden
   updateActiveTabClass();
   buildToc(); // contents follow the newly visible page
@@ -990,11 +1006,34 @@ async function flushAutoSave(){
 const ANN_CONTEXT = 64; // characters of context stored on each side of a quote
 const ANN_SKIP = "svg, .mermaid, .katex-mathml, script, style, noscript, [aria-hidden='true'], #annPanel, #annEditor";
 const ANN_COLORS = ["yellow", "green", "blue", "pink", "purple"];
-const ANN_HEX = { yellow: "#efc558", green: "#89b882", blue: "#7bafda", pink: "#dc8fa2", purple: "#ae97dc" };
+const ANN_DEFAULT_PALETTE = { yellow: "#efc558", green: "#89b882", blue: "#7bafda", pink: "#dc8fa2", purple: "#ae97dc" };
+// The five circle colors are user-customizable and persist in prefs.json —
+// annotations store the slot name, never a hex, so repainting a slot
+// repaints every annotation in it instantly.
+let annPalette = { ...ANN_DEFAULT_PALETTE };
+const ANN_PENCIL_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12.8 10.8 5.5l3.7 3.7-7.3 7.3H3.5z"/><path d="M10.8 5.5 13 3.3a1.5 1.5 0 0 1 2.1 0l1.6 1.6a1.5 1.5 0 0 1 0 2.1l-2.2 2.2"/></svg>';
+function annPaletteInject(){
+  const hex = (h, a) => {
+    const n = parseInt(h.slice(1), 16);
+    return "rgba(" + ((n >> 16) & 255) + "," + ((n >> 8) & 255) + "," + (n & 255) + "," + a + ")";
+  };
+  let el = document.getElementById("annPaletteStyle");
+  if(!el){ el = document.createElement("style"); el.id = "annPaletteStyle"; document.head.appendChild(el); }
+  el.textContent = Object.keys(ANN_DEFAULT_PALETTE).map(c =>
+    "::highlight(mdv-ann-" + c + "){background:" + hex(annPalette[c], .52) + ";color:inherit}" +
+    "html.dark ::highlight(mdv-ann-" + c + "){background:" + hex(annPalette[c], .62) + ";color:inherit}"
+  ).join("");
+}
+function annSyncSwatches(row){
+  row.querySelectorAll(".ann-color[data-color]").forEach(x => {
+    x.style.background = annPalette[x.dataset.color];
+  });
+}
 // Per open tab: DB rows, resolution results and the flat-text caches.
 const annState = new Map(); // tabId -> { rows, resolved: Map(id), flat, seq }
 let annSelectedColor = "yellow";
-let annEditorState = null; // { tabId, anchor?, row?, color, armTimer }
+let annEditorState = null; // { tabId, anchor?, row?, color, armTimer, expanded }
+let annProposeAnchor = null; // the selection anchor behind the floating propose button
 const annPaintSupported = !!(window.CSS && CSS.highlights && typeof Highlight === "function");
 
 // Flat text = concatenated textContent of the visible article content, with
@@ -1117,6 +1156,7 @@ function annStateOf(tabId){
 }
 function annForgetTab(tabId){
   annState.delete(tabId);
+  hideAnnPropose();
   annRebuildPaint();
 }
 // Repaint every painted highlight from the per-tab resolved state.
@@ -1149,6 +1189,7 @@ function annRebuildPaint(){
 // Fresh truth: list the document's annotations, resolve them against the
 // live render, paint, and persist any re-anchoring that changed something.
 async function mdvAnnotationsRefresh(tabId){
+  hideAnnPropose(); // a re-render invalidates the selection it floated next to
   const t = tabs.find(x => x.id === tabId);
   const state = annStateOf(tabId);
   const seq = ++state.seq;
@@ -1246,7 +1287,7 @@ function annRenderPanelList(){
     }
     const meta = document.createElement("div"); meta.className = "ann-meta";
     const dot = document.createElement("span"); dot.className = "ann-dot";
-    dot.style.background = ANN_HEX[row.color] || ANN_HEX.yellow;
+    dot.style.background = annPalette[row.color] || annPalette.yellow;
     meta.appendChild(dot);
     const label = document.createElement("span");
     label.textContent = row.note ? "Highlight · Note" : "Highlight";
@@ -1271,6 +1312,29 @@ function annRenderPanelList(){
   }
 }
 function annRectNearPoint(x, y){ return { left: x, top: y, bottom: y + 1, right: x }; }
+// The non-intrusive proposal button: appears just below the caret after a
+// selection, vanishes on click-away/scroll/Escape/new selection. Clicking it
+// opens the editor — no modal, ever.
+function showAnnPropose(anchor, sel){
+  const btn = $("#annPropose");
+  if(!btn) return;
+  annProposeAnchor = anchor;
+  const range = sel.rangeCount ? sel.getRangeAt(0) : null;
+  let r = range ? range.getBoundingClientRect() : null;
+  const rects = range ? range.getClientRects() : null;
+  if(rects && rects.length) r = rects[rects.length - 1]; // the caret's line
+  const size = 34;
+  const left = Math.max(8, Math.min((r ? r.right : 40) + 4, window.innerWidth - size - 8));
+  const top = Math.max(8, Math.min((r ? r.bottom : 100) + 6, window.innerHeight - size - 8));
+  btn.style.left = left + "px";
+  btn.style.top = top + "px";
+  btn.hidden = false;
+}
+function hideAnnPropose(){
+  const btn = $("#annPropose");
+  if(btn) btn.hidden = true;
+  annProposeAnchor = null;
+}
 function annTogglePanel(force){
   const panel = $("#annPanel");
   if(!panel) return;
@@ -1279,18 +1343,56 @@ function annTogglePanel(force){
   if(show) annRenderPanelList();
   annUpdateBadge();
 }
+// Apply a color immediately. In the collapsed editor there is no Save
+// button — clicking a circle IS the action (instant highlight / recolor).
+async function annApplyEditorColor(c){
+  const es = annEditorState;
+  if(!es) return;
+  const t = tabs.find(x => x.id === es.tabId);
+  if(!t){ annCloseEditor(); return; }
+  if(!useIpc()){ showErr(t, "Annotations are stored in the mdview app."); return; }
+  if(es.row){
+    try{
+      const ok = await dbCall("annotation_update", { annotation_id: es.row.id, color: c, note: es.row.note || "" });
+      if(ok !== true) throw new Error("the annotation no longer exists");
+      annCloseEditor();
+      mdvAnnotationsRefresh(t.id); // single source of truth: re-list, re-paint
+    }catch(e){
+      showErr(t, "Could not recolor the annotation: " + (e.message || e));
+    }
+    return;
+  }
+  if(t.savedId == null){ await window.mdviewAutoSaveDocument(t); }
+  if(t.savedId == null){
+    showErr(t, "Could not save the document, so the highlight was not stored.");
+    return;
+  }
+  try{
+    const a = await dbCall("annotation_add", {
+      doc_id: t.savedId, exact: es.anchor.exact, prefix: es.anchor.prefix,
+      suffix: es.anchor.suffix, start: es.anchor.start, end: es.anchor.end,
+      color: c, note: "",
+    });
+    if(!a || typeof a !== "object" || a.id == null) throw new Error("bad response");
+    annCloseEditor();
+    mdvAnnotationsRefresh(t.id);
+  }catch(e){
+    showErr(t, "Could not save the highlight: " + (e.message || e));
+  }
+}
 function annOpenEditor(t, target, rect){
   const editor = $("#annEditor");
   if(!editor) return;
+  hideAnnPropose();
   const isNew = !target || target.id == null;
   const color = isNew ? annSelectedColor
     : (ANN_COLORS.includes(target.color) ? target.color : "yellow");
-  annEditorState = { tabId: t.id, anchor: isNew ? target : null, row: isNew ? null : target, color, armTimer: null };
+  // A fresh selection opens as a bare palette (one click applies, click away
+  // discards). Opening an existing highlight opens the note view directly —
+  // that is the edit intent.
+  const startExpanded = !isNew;
+  annEditorState = { tabId: t.id, anchor: isNew ? target : null, row: isNew ? null : target, color, armTimer: null, expanded: startExpanded };
   editor.innerHTML = "";
-  const quote = document.createElement("div");
-  quote.className = "ann-editor-quote";
-  quote.textContent = String(target && target.exact || "");
-  editor.appendChild(quote);
   const colors = document.createElement("div");
   colors.className = "ann-colors";
   colors.setAttribute("role", "radiogroup");
@@ -1299,26 +1401,61 @@ function annOpenEditor(t, target, rect){
     const b = document.createElement("button");
     b.type = "button";
     b.className = "ann-color";
-    b.style.background = ANN_HEX[c];
-    b.title = c;
+    b.dataset.color = c;
+    b.style.background = annPalette[c];
+    b.title = "Highlight " + c;
     b.setAttribute("role", "radio");
     b.setAttribute("aria-checked", c === color ? "true" : "false");
     b.onclick = () => {
       annEditorState.color = c;
       annSelectedColor = c;
-      colors.querySelectorAll(".ann-color").forEach(x => {
-        x.setAttribute("aria-checked", x.title === c ? "true" : "false");
+      colors.querySelectorAll(".ann-color[data-color]").forEach(x => {
+        x.setAttribute("aria-checked", String(x.dataset.color === c));
       });
+      if(!annEditorState.expanded) void annApplyEditorColor(c);
     };
     colors.appendChild(b);
   }
+  // Customize the current slot's color — persisted in prefs.
+  const picker = document.createElement("button");
+  picker.type = "button";
+  picker.className = "ann-color ann-picker";
+  picker.title = "Customize this color";
+  picker.setAttribute("aria-label", "Customize this color");
+  const colorInput = document.createElement("input");
+  colorInput.type = "color";
+  colorInput.className = "ann-color-input";
+  colorInput.setAttribute("aria-hidden", "true");
+  colorInput.tabIndex = -1;
+  colorInput.value = annPalette[color] || ANN_DEFAULT_PALETTE[color] || "#efc558";
+  colorInput.oninput = () => {
+    annPalette[annEditorState.color] = colorInput.value.toLowerCase();
+    annPaletteInject();
+    annSyncSwatches(colors);
+    savePrefs();
+  };
+  picker.onclick = () => colorInput.click();
+  colors.appendChild(picker);
+  // Pencil expands the note area with Save/Cancel.
+  const pencil = document.createElement("button");
+  pencil.type = "button";
+  pencil.className = "ann-color ann-pencil";
+  pencil.innerHTML = ANN_PENCIL_SVG;
+  pencil.title = startExpanded ? "Hide note" : "Add a note";
+  pencil.setAttribute("aria-pressed", startExpanded ? "true" : "false");
+  pencil.setAttribute("aria-label", "Toggle note");
+  colors.appendChild(pencil);
   editor.appendChild(colors);
+  editor.appendChild(colorInput);
+  const noteWrap = document.createElement("div");
+  noteWrap.className = "ann-note-wrap";
+  noteWrap.hidden = !startExpanded;
   const input = document.createElement("textarea");
   input.className = "ann-textarea";
   input.placeholder = "Add a note (optional)…";
   input.setAttribute("aria-label", "Annotation note");
   input.value = isNew ? "" : String(target.note || "");
-  editor.appendChild(input);
+  noteWrap.appendChild(input);
   const actions = document.createElement("div");
   actions.className = "ann-editor-actions";
   const cancel = document.createElement("button");
@@ -1347,12 +1484,20 @@ function annOpenEditor(t, target, rect){
   save.textContent = isNew ? "Save highlight" : "Save changes";
   save.onclick = () => { void annSaveEditor(input.value.trim()); };
   actions.appendChild(save);
-  editor.appendChild(actions);
+  noteWrap.appendChild(actions);
+  editor.appendChild(noteWrap);
+  pencil.onclick = () => {
+    annEditorState.expanded = !annEditorState.expanded;
+    noteWrap.hidden = !annEditorState.expanded;
+    pencil.setAttribute("aria-pressed", annEditorState.expanded ? "true" : "false");
+    pencil.title = annEditorState.expanded ? "Hide note" : "Add a note";
+    if(annEditorState.expanded) input.focus({ preventScroll: true });
+  };
   editor.hidden = false;
   const w = Math.min(330, window.innerWidth - 20);
   editor.style.left = Math.max(10, Math.min(window.innerWidth - w - 10, (rect && rect.left) || 40)) + "px";
   editor.style.top = Math.max(8, Math.min(window.innerHeight - 260, ((rect && rect.bottom) || 100) + 8)) + "px";
-  input.focus({ preventScroll: true });
+  if(startExpanded) input.focus({ preventScroll: true });
 }
 function annCloseEditor(){
   const editor = $("#annEditor");
@@ -1449,9 +1594,31 @@ function mdvAnnotationsInvalidateDoc(docId){
 function annWireEvents(){
   $("#annToggle").addEventListener("click", () => annTogglePanel());
   $("#annClose").addEventListener("click", () => annTogglePanel(false));
+  $("#annPropose").addEventListener("click", e => {
+    const t = cur();
+    let anchor = annProposeAnchor;
+    // The button can be hit inside the selection-settle window; recompute
+    // from the live selection rather than swallowing the click.
+    if(!anchor && t){
+      const view = document.getElementById("view-" + t.id);
+      const root = view ? view.querySelector(".markdown-body") : null;
+      if(root) anchor = annAnchorFromSelection(root, window.getSelection());
+    }
+    if(!t || !anchor){ hideAnnPropose(); return; }
+    const r = e.currentTarget.getBoundingClientRect();
+    annOpenEditor(t, anchor, { left: r.left, top: r.top, bottom: r.bottom });
+  });
+  // Click-away dismisses the proposal button (pointerdown fires before the
+  // selection collapses, so it catches every other click).
+  document.addEventListener("pointerdown", e => {
+    const btn = $("#annPropose");
+    if(btn && !btn.hidden && !(e.target === btn || (e.target.closest && e.target.closest("#annPropose")))){
+      hideAnnPropose();
+    }
+  }, true);
   document.addEventListener("pointerup", e => {
     if(e.button !== 0) return;
-    if(e.target.closest && e.target.closest("#annPanel, #annEditor, #bar")) return;
+    if(e.target.closest && e.target.closest("#annPanel, #annEditor, #annPropose, #bar")) return;
     if(!useIpc()) return;
     const t = cur();
     if(!t || !t.rendered) return;
@@ -1462,16 +1629,16 @@ function annWireEvents(){
     setTimeout(() => {
       const sel = window.getSelection();
       const anchor = annAnchorFromSelection(root, sel);
-      if(!anchor) return;
-      const rect = sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
-      annOpenEditor(t, anchor, rect);
+      if(anchor) showAnnPropose(anchor, sel);
+      else hideAnnPropose();
     }, 70);
   });
   document.addEventListener("click", e => {
     const editor = $("#annEditor");
     const inEditor = editor && !editor.hidden && editor.contains(e.target);
     const inPanel = e.target.closest && e.target.closest("#annPanel");
-    if(inEditor || inPanel) return;
+    const inPropose = e.target.closest && e.target.closest("#annPropose");
+    if(inEditor || inPanel || inPropose) return;
     const t = cur();
     const hit = t ? annHitAt(t, e.clientX, e.clientY) : null;
     if(hit){
@@ -1483,7 +1650,8 @@ function annWireEvents(){
   document.addEventListener("keydown", e => {
     if(e.key === "Escape"){
       const editor = $("#annEditor");
-      if(editor && !editor.hidden){ e.preventDefault(); annCloseEditor(); }
+      if(editor && !editor.hidden){ e.preventDefault(); annCloseEditor(); return; }
+      hideAnnPropose();
       return;
     }
     const mod = e.ctrlKey || e.metaKey;
@@ -1495,10 +1663,12 @@ function annWireEvents(){
   window.addEventListener("resize", () => {
     const editor = $("#annEditor");
     if(editor && !editor.hidden) annCloseEditor();
+    hideAnnPropose();
   });
   window.addEventListener("scroll", () => {
     const editor = $("#annEditor");
     if(editor && !editor.hidden) annCloseEditor();
+    hideAnnPropose();
   }, true);
 }
 
@@ -2128,6 +2298,7 @@ window.addEventListener("wheel", e=>{
 
 /* ---------- boot ---------- */
 loadPrefs(); applyPrefs(); applyTheme(false);
+annPaletteInject();
 annWireEvents();
 // WebView2 handles F11 itself (native element fullscreen) which fights our
 // Rust-driven borderless fullscreen and desyncs the toggle. Never let the

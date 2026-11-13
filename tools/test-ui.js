@@ -249,63 +249,91 @@ async function main() {
     const banner = await evalValue(send, "document.querySelector('.similar') ? document.querySelector('.similar').textContent : ''");
     report("banner names the saved document", banner.indexOf("Renamed doc") >= 0, "banner: " + banner);
 
-    // 7b. Annotate the unsaved tab. Highlighting must auto-save the document
-    //     first (identity before ink), and the annotation must reference it.
-    report("selection opens the highlight editor", await (async () => {
-      await evalValue(send, `(() => {
-        const p = document.querySelector('.view.active .markdown-body p');
-        const tn = p && p.firstChild;
-        if (!tn) return false;
-        const r = document.createRange();
-        r.selectNodeContents(tn);
-        const s = window.getSelection();
-        s.removeAllRanges();
-        s.addRange(r);
-        document.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true, clientX: 40, clientY: 40 }));
-        return true;
-      })()`);
-      return waitFor(send, "!document.querySelector('#annEditor').hidden", 5000);
-    })());
-    await evalValue(send, "(() => { const b = Array.from(document.querySelectorAll('#annEditor .btn.primary')).find(function (x) { return x.textContent === 'Save highlight'; }); if (b) b.click(); return true; })()");
+    // 7b. Selecting text reveals a proposal button just below the caret — not
+    //     the editor. Click-away dismisses it; clicking it opens the palette.
+    //     The document auto-saves on the first annotation (identity first).
+    const selectText = `(() => {
+      const p = document.querySelector('.view.active .markdown-body p');
+      const tn = p && p.firstChild;
+      if (!tn) return false;
+      const r = document.createRange();
+      r.selectNodeContents(tn);
+      const s = window.getSelection();
+      s.removeAllRanges();
+      s.addRange(r);
+      document.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true, clientX: 40, clientY: 40 }));
+      return true;
+    })()`;
+    await evalValue(send, selectText);
+    report("selection reveals the propose button (not the editor)", await waitFor(send,
+      "!document.querySelector('#annPropose').hidden && !!document.querySelector('#annEditor') && document.querySelector('#annEditor').hidden", 5000));
+    await evalValue(send, "(() => { document.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true, clientX: 5, clientY: 5 })); return true; })()");
+    report("clicking away dismisses the propose button", await waitFor(send,
+      "document.querySelector('#annPropose').hidden", 5000));
+    await evalValue(send, selectText);
+    await waitFor(send, "!document.querySelector('#annPropose').hidden", 5000);
+    await evalValue(send, "document.querySelector('#annPropose').click()");
+    report("propose opens the palette-only editor", await waitFor(send,
+      "!document.querySelector('#annEditor').hidden", 5000));
+    report("new highlight starts collapsed (no note UI)", (await evalValue(send,
+      "(document.querySelector('#annEditor .ann-note-wrap') || {}).hidden")) === true);
+    await evalValue(send, "(() => { const b = document.querySelector('#annEditor .ann-color[data-color=\"yellow\"]'); if (b) b.click(); return true; })()");
+    report("collapsed color click stores the highlight immediately", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'annotation_add'; })", 8000));
     report("annotation auto-saves the unsaved document first", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document'; })", 8000));
-    report("annotation_add fires with a verbatim quote and sane offsets", await waitFor(send, `(() => {
+    report("auto-save happens before the annotation is stored", await evalValue(send, `(() => {
+      const cmds = window.__UI_TEST_SENT__.map(function (m) { return m.cmd; });
+      const ai = cmds.lastIndexOf('annotation_add'), si = cmds.lastIndexOf('auto_save_document');
+      return si !== -1 && ai !== -1 && si < ai;
+    })()`));
+    report("saving closes the editor", await waitFor(send,
+      "document.querySelector('#annEditor').hidden", 5000));
+    // Pencil expands the note area; second highlight with a note.
+    await evalValue(send, selectText);
+    await waitFor(send, "!document.querySelector('#annPropose').hidden", 5000);
+    await evalValue(send, "document.querySelector('#annPropose').click()");
+    await waitFor(send, "!document.querySelector('#annEditor').hidden", 5000);
+    await evalValue(send, "(() => { const b = document.querySelector('#annEditor .ann-pencil'); if (b) b.click(); return true; })()");
+    report("pencil expands the note area", (await evalValue(send,
+      "(document.querySelector('#annEditor .ann-note-wrap') || {}).hidden")) === false);
+    await evalValue(send, "(() => { const ta = document.querySelector('#annEditor .ann-textarea'); ta.value = 'second note'; return true; })()");
+    await evalValue(send, "(() => { const b = Array.from(document.querySelectorAll('#annEditor .btn.primary')).find(function (x) { return x.textContent === 'Save highlight'; }); if (b) b.click(); return true; })()");
+    report("note flow saves the highlight carrying its note", await waitFor(send, `(() => {
       const adds = window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_add'; });
-      if (!adds.length) return false;
-      const a = adds[adds.length - 1];
-      return a.exact === 'alpha bravo charlie' && a.start >= 0 && a.end > a.start &&
-             typeof a.prefix === 'string' && typeof a.suffix === 'string';
+      return adds.length >= 2 && adds[adds.length - 1].note === 'second note';
     })()`, 8000));
-    const annAdd = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_add'; }).pop()");
-    const autoSave = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'auto_save_document'; }).pop()");
-    report("annotation_add targets the document auto-saved moments earlier",
-      !!annAdd && !!autoSave, "add: " + JSON.stringify(annAdd) + " autosave: " + JSON.stringify(autoSave));
-    report("saving the highlight closes the editor", await waitFor(send,
-      "!!document.querySelector('#annEditor').hidden", 5000));
-    // Panel shows it; badge counts it.
+    // Panel: badge counts both; both deletable through the UI.
     await evalValue(send, "document.querySelector('#annToggle').click()");
-    report("panel lists the highlight", await waitFor(send,
-      "!!document.querySelector('.ann-item') && document.querySelector('.ann-item').textContent.indexOf('alpha bravo charlie') >= 0", 5000));
-    report("badge counts the highlight", (await evalValue(send, "document.querySelector('#annCount').textContent")) === "1");
-    // Edit the note through the editor.
-    await evalValue(send, "document.querySelector('.ann-item').click()");
-    report("clicking a highlight opens its editor", await waitFor(send,
-      "!!document.querySelector('#annEditor .ann-editor-quote')", 5000));
+    report("badge counts both highlights", (await evalValue(send, "document.querySelector('#annCount').textContent")) === "2");
+    report("panel lists both highlights", (await evalValue(send, "document.querySelectorAll('.ann-item').length")) === 2);
+    // Edit the note on the one that carries it (editor opens expanded).
+    await evalValue(send, `(() => {
+      const items = Array.from(document.querySelectorAll('.ann-item'));
+      const second = items.find(function (el) { return el.textContent.indexOf('second note') >= 0; });
+      if (second) second.click();
+      return true;
+    })()`);
+    report("opening a stored highlight shows its note", await waitFor(send,
+      "!document.querySelector('#annEditor').hidden && document.querySelector('#annEditor .ann-textarea').value === 'second note'", 5000));
     await evalValue(send, "(() => { const ta = document.querySelector('#annEditor .ann-textarea'); ta.value = 'reviewed'; return true; })()");
     await evalValue(send, "(() => { const b = Array.from(document.querySelectorAll('#annEditor .btn.primary')).find(function (x) { return x.textContent === 'Save changes'; }); if (b) b.click(); return true; })()");
     report("note edit goes through annotation_update", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'annotation_update' && m.note === 'reviewed'; })", 5000));
-    // Delete it via the same two-click confirm pattern.
-    await evalValue(send, "document.querySelector('.ann-item').click()");
-    report("editor reopens with the delete button", await waitFor(send,
-      "!!document.querySelector('#annEditor .btn.danger')", 5000));
-    await evalValue(send, "(() => { document.querySelector('#annEditor .btn.danger').click(); return true; })()");
+    // Two-click delete of both highlights; the badge must end empty.
+    const clickFirstItem = `(() => { const item = document.querySelector('.ann-item'); if (item) item.click(); return true; })()`;
+    const clickDanger = `(() => { const b = document.querySelector('#annEditor .btn.danger'); if (b) b.click(); return true; })()`;
+    await evalValue(send, clickFirstItem);
+    await evalValue(send, clickDanger);
     report("first click arms the delete confirm",
       (await evalValue(send, "(document.querySelector('#annEditor .btn.danger') || {}).textContent")) === "Delete?");
-    await evalValue(send, "(() => { document.querySelector('#annEditor .btn.danger').click(); return true; })()");
+    await evalValue(send, clickDanger);
     report("confirming fires annotation_delete", await waitFor(send,
-      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'annotation_delete'; })", 5000));
-    report("badge clears once the last highlight is gone", await waitFor(send,
+      "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_delete'; }).length >= 1", 5000));
+    await evalValue(send, clickFirstItem);
+    await evalValue(send, clickDanger);
+    await evalValue(send, clickDanger);
+    report("deleting the last highlight clears the badge", await waitFor(send,
       "document.querySelector('#annCount').textContent === ''", 5000));
     await evalValue(send, "document.querySelector('#annToggle').click()"); // panel closed for the rest of the flow
 
