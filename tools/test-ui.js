@@ -30,7 +30,10 @@ const shim =
   "window.ipc = { postMessage: function (raw) {\n" +
   "  var m = JSON.parse(raw);\n" +
   "  window.__UI_TEST_SENT__.push(m);\n" +
-  "  var reply = function (ok, data) { setTimeout(function () { window.__mdview_ipc_result(m.id, ok, data); }, 0); };\n" +
+  "  var reply = function (ok, data) {\n" +
+  "    if (typeof window.__UI_TEST_SLOW_ADD__ !== 'boolean') window.__UI_TEST_SLOW_ADD__ = false;\n" +
+  "    setTimeout(function () { window.__mdview_ipc_result(m.id, ok, data); }, window.__UI_TEST_SLOW_ADD__ ? 350 : 0);\n" +
+  "  };\n" +
   "  if (m.cmd === 'render') reply(true, " + JSON.stringify(FIXTURE_HTML) + ");\n" +
   "  else if (m.cmd === 'save_prefs') reply(true, true);\n" +
   "  else if (m.cmd === 'set_title') reply(true, 'true');\n" +
@@ -366,9 +369,37 @@ async function main() {
     report("clicking the noted outer highlight expands its note", await waitFor(send,
       "!document.querySelector('#annEditor').hidden && document.querySelector('#annEditor .ann-textarea').value === 'typed note'", 5000));
     await evalValue(send, "(() => { document.dispatchEvent(new MouseEvent('click', { clientX: 5, clientY: 5, bubbles: true })); return true; })()");
-    // Two-click icon delete of both highlights; marker goes, badge empties.
+
+    // 7c. Responsiveness: the paint must land *before* the store write does.
+    //     With the fake IPC slowed to 350ms, an optimistic highlight shows
+    //     within milliseconds of the click.
+    await evalValue(send, "window.__UI_TEST_SLOW_ADD__ = true;");
+    await evalValue(send, selectBravo);
+    await waitFor(send, "!document.querySelector('#annPropose').hidden", 5000);
+    await evalValue(send, "document.querySelector('#annPropose').click()");
+    await evalValue(send, "(() => new Promise(r => setTimeout(r, 80)))()");
+    const optimistic = await evalValue(send, "window.CSS && CSS.highlights && CSS.highlights.get('mdv-ann-blue') ? CSS.highlights.get('mdv-ann-blue').size : 0");
+    report("optimistic highlight paints before the store write lands", optimistic >= 3);
+    report("the optimistic highlight settles after the store confirms", await waitFor(send,
+      "document.querySelector('#annCount').textContent === '3'", 3000));
+    await evalValue(send, clickAtChar('alpha'));
+    await waitFor(send, "!document.querySelector('#annEditor').hidden", 5000);
+    await evalValue(send, "(() => { const b = document.querySelector('#annEditor .ann-color[data-color=\"pink\"]'); if (b) b.click(); return true; })()");
+    await evalValue(send, "(() => new Promise(r => setTimeout(r, 80)))()");
+    const optimisticPink = await evalValue(send, "window.CSS && CSS.highlights && CSS.highlights.get('mdv-ann-pink') ? CSS.highlights.get('mdv-ann-pink').size : 0");
+    report("optimistic recolor paints before the store write lands", optimisticPink >= 1);
+    report("recolor settles after the store confirms", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'annotation_update' && m.color === 'pink'; })", 3000));
+    await evalValue(send, "window.__UI_TEST_SLOW_ADD__ = false;");
+    await waitFor(send, "document.querySelector('#annCount').textContent === '3'", 5000);
+    // Three highlights now; the badge must end empty.
     const clickFirstItem = `(() => { const item = document.querySelector('.ann-item'); if (item) item.click(); return true; })()`;
     const clickTrash = `(() => { const b = document.querySelector('#annEditor .ann-trash'); if (b) b.click(); return true; })()`;
+    const deleteOne = async () => {
+      await evalValue(send, clickFirstItem);
+      await evalValue(send, clickTrash);
+      await evalValue(send, clickTrash);
+    };
     await evalValue(send, "document.querySelector('#annToggle').click()");
     await evalValue(send, clickFirstItem);
     await evalValue(send, clickTrash);
@@ -377,9 +408,8 @@ async function main() {
     await evalValue(send, clickTrash);
     report("confirming fires annotation_delete", await waitFor(send,
       "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_delete'; }).length >= 1", 5000));
-    await evalValue(send, clickFirstItem);
-    await evalValue(send, clickTrash);
-    await evalValue(send, clickTrash);
+    await deleteOne();
+    await deleteOne();
     report("deleting the last highlight clears the badge", await waitFor(send,
       "document.querySelector('#annCount').textContent === ''", 5000));
     await evalValue(send, "document.querySelector('#annToggle').click()"); // panel closed for the rest of the flow

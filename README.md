@@ -602,10 +602,11 @@ stateful fake document store behind the IPC boundary, then drives headless
 Chrome through the flows the user actually performs: paste a document, save it
 with the Save button, double-click a tab to rename it (Enter commits), open
 **Saved documents** on the empty tab, search (debounced) and click the result,
-annotate the unsaved tab (propose button stores the highlight instantly; the
-document auto-saves first), expand the note with the pencil, debounced
-auto-save, the note marker on noted highlights, palette-layer stacking,
-edit and delete through the real UI, and verifies the similarity offer swaps
+annotate the unsaved tab (propose button stores the highlight instantly and
+paints optimistically before the store confirms), expand the note with the
+pencil, debounced auto-save, the note marker on noted highlights, palette-layer
+stacking, optimistic recolor/delete, edit and delete through the real UI, and
+verifies the similarity offer swaps
 in the saved document only on explicit **Open saved**. The anchor resolver is exercised
 directly against the edge cases that break naive anchoring: inserted text,
 deleted passages, duplicate quotes with and without distinguishable context,

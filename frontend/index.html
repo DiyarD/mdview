@@ -997,10 +997,13 @@ async function confirmDeleteSavedDocument(id, item, container, btn){
 // created (or updated) before any annotation references it.
 const autoSaveJobs = [];
 let autoSaveTimer = 0;
-window.mdviewAutoSaveDocument = function(t){
+// `immediate` skips the 500ms coalescing debounce for one-shot user actions
+// (annotations) — the flush still coalesces everything queued so far.
+window.mdviewAutoSaveDocument = function(t, immediate){
   return new Promise(resolve=>{
     if(!useIpc() || !t || !t.md){ resolve(null); return; }
     autoSaveJobs.push({ t, resolve });
+    if(immediate){ void flushAutoSave(); return; }
     clearTimeout(autoSaveTimer);
     autoSaveTimer = setTimeout(flushAutoSave, 500);
   });
@@ -1112,11 +1115,11 @@ function annFlatOffset(flat, root, node, offset){
 }
 // The anchor captured from a live selection. `exact` is sliced from the flat
 // text itself, so it can never disagree with the stored quote.
-function annAnchorFromSelection(root, sel){
+function annAnchorFromSelection(root, sel, flat){
   if(!sel || sel.isCollapsed || !sel.rangeCount) return null;
   const range = sel.getRangeAt(0);
   if(!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
-  const flat = annFlat(root);
+  flat = flat || annFlat(root);
   let start = annFlatOffset(flat, root, range.startContainer, range.startOffset);
   let end = annFlatOffset(flat, root, range.endContainer, range.endOffset);
   if(start == null || end == null) return null;
@@ -1182,7 +1185,7 @@ function annRangeFromOffsets(flat, start, end){
 }
 function annStateOf(tabId){
   let s = annState.get(tabId);
-  if(!s){ s = { rows: [], resolved: new Map(), flat: null, seq: 0 }; annState.set(tabId, s); }
+  if(!s){ s = { rows: [], resolved: new Map(), flat: null, seq: 0, pending: [] }; annState.set(tabId, s); }
   return s;
 }
 function annForgetTab(tabId){
@@ -1196,7 +1199,7 @@ function annRebuildPaint(){
   const groups = {};
   for(const c of ANN_COLORS) groups[c] = [];
   for(const [tabId, st] of annState){
-    if(!st.resolved.size) continue;
+    if(!st.resolved.size && !st.pending.length) continue;
     const view = document.getElementById("view-" + tabId);
     if(!view || !view.isConnected){ annState.delete(tabId); continue; }
     for(const row of st.rows){
@@ -1205,6 +1208,14 @@ function annRebuildPaint(){
       const range = st.flat ? annRangeFromOffsets(st.flat, res.start, res.end) : null;
       const color = ANN_COLORS.includes(row.color) ? row.color : "yellow";
       if(range) groups[color].push(range);
+    }
+    // Optimistic paints: same offsets, not yet confirmed by the store. The
+    // refresh pass replaces them with the real rows (or drops them on error).
+    if(st.flat){
+      for(const p of st.pending){
+        const range = annRangeFromOffsets(st.flat, p.start, p.end);
+        if(range) groups[p.color].push(range);
+      }
     }
   }
   for(const c of ANN_COLORS){
@@ -1263,16 +1274,17 @@ async function mdvAnnotationsRefresh(tabId){
       const rows = await dbCall("annotation_list", { doc_id: t.savedId });
       if(state.seq !== seq) return; // a newer render won the race
       state.rows = Array.isArray(rows) ? rows : [];
+      state.pending.length = 0; // fresh truth wins over optimistic paints
     }catch(e){
       if(state.seq === seq && t) showErr(t, "Could not load annotations: " + (e.message || e));
     }
   }
   const view = t ? document.getElementById("view-" + t.id) : null;
   const root = view ? view.querySelector(".markdown-body") : null;
-  if(t && root && state.rows.length){
+  if(t && root && (state.rows.length || state.pending.length)){
     const flat = annFlat(root);
     state.flat = flat;
-    for(const row of state.rows){
+    if(state.rows.length) for(const row of state.rows){
       const res = resolveAnchor(flat.text, row);
       if(res) state.resolved.set(row.id, res);
       // Persist re-anchoring only when something changed; orphans keep their
@@ -1415,8 +1427,31 @@ async function annCreateFromSelection(anchor){
   const t = cur();
   if(!t || !useIpc()) return;
   hideAnnPropose();
-  if(t.savedId == null){ await window.mdviewAutoSaveDocument(t); }
-  if(t.savedId == null){ showErr(t, "Could not save the document, so the highlight was not stored."); return; }
+  const view = document.getElementById("view-" + t.id);
+  const root = view ? view.querySelector(".markdown-body") : null;
+  const state = annStateOf(t.id);
+  if(root) state.flat = annFlat(root);
+  // Optimistic: the highlight paints now, the store confirms in the
+  // background. Dropped again only if the write actually fails.
+  const pending = { color: annSelectedColor, start: anchor.start, end: anchor.end };
+  state.pending.push(pending);
+  annRebuildPaint();
+  const dropOptimistic = () => {
+    const i = state.pending.indexOf(pending);
+    if(i >= 0) state.pending.splice(i, 1);
+    annRebuildPaint();
+  };
+  // ::selection paints over ::highlight — drop it so the new highlight is
+  // visible right away.
+  try{ window.getSelection().removeAllRanges(); }catch(_){}
+  if(t.savedId == null){
+    await window.mdviewAutoSaveDocument(t, /* immediate */ true);
+  }
+  if(t.savedId == null){
+    dropOptimistic();
+    showErr(t, "Could not save the document, so the highlight was not stored.");
+    return;
+  }
   try{
     const a = await dbCall("annotation_add", {
       doc_id: t.savedId, exact: anchor.exact, prefix: anchor.prefix,
@@ -1424,11 +1459,9 @@ async function annCreateFromSelection(anchor){
       color: annSelectedColor, note: "",
     });
     if(!a || typeof a !== "object" || a.id == null) throw new Error("bad response");
-    // The native selection paints over the highlight, hiding it: drop it so
-    // the new highlight is visible immediately.
-    try{ window.getSelection().removeAllRanges(); }catch(_){}
-    mdvAnnotationsRefresh(t.id);
+    mdvAnnotationsRefresh(t.id); // reconciles pending against the stored rows
   }catch(e){
+    dropOptimistic();
     showErr(t, "Could not save the highlight: " + (e.message || e));
   }
 }
@@ -1439,15 +1472,22 @@ async function annApplyEditorColor(c){
   const t = tabs.find(x => x.id === es.tabId);
   if(!t){ annCloseEditor(); return; }
   if(!useIpc()) return;
-  try{
-    const ok = await dbCall("annotation_update", { annotation_id: es.row.id, color: c, note: es.row.note || "" });
-    if(ok !== true) throw new Error("the annotation no longer exists");
-    es.row.color = c;
-    annCloseEditor();
-    mdvAnnotationsRefresh(t.id); // single source of truth: re-list, re-paint
-  }catch(e){
-    showErr(t, "Could not recolor the annotation: " + (e.message || e));
-  }
+  // Optimistic: move the painted range into the new color group now; the
+  // store write reconciles (and reverts) in the background.
+  const previousColor = es.row.color;
+  es.row.color = c;
+  annRebuildPaint();
+  annCloseEditor();
+  dbCall("annotation_update", { annotation_id: es.row.id, color: c, note: es.row.note || "" })
+    .then(ok => {
+      if(ok !== true) throw new Error("the annotation no longer exists");
+      return mdvAnnotationsRefresh(t.id); // single source of truth: re-list, re-paint
+    })
+    .catch(e => {
+      es.row.color = previousColor;
+      annRebuildPaint();
+      showErr(t, "Could not recolor the annotation: " + (e.message || e));
+    });
 }
 // Notes save themselves, debounced like the home-screen search box — there
 // is no Save button to press.
@@ -1595,13 +1635,26 @@ async function annDeleteEditorRow(){
   if(!es || !es.row) return;
   const t = tabs.find(x => x.id === es.tabId);
   if(es.noteTimer){ clearTimeout(es.noteTimer); es.noteTimer = null; } // don't resurrect after delete
+  const rowId = es.row.id;
+  // Optimistic removal; the refresh restores it if the store refuses.
+  if(t){
+    const state = annStateOf(t.id);
+    const idx = state.rows.findIndex(r => r.id === rowId);
+    if(idx >= 0) state.rows.splice(idx, 1);
+    state.resolved.delete(rowId);
+    annRebuildPaint();
+    annUpdateBadge();
+    annRenderPanelList();
+    annRenderMarkers();
+  }
+  annCloseEditor();
   try{
-    const ok = await dbCall("annotation_delete", { annotation_id: es.row.id });
+    const ok = await dbCall("annotation_delete", { annotation_id: rowId });
     if(ok !== true) throw new Error("the annotation no longer exists");
-    annCloseEditor();
     if(t) mdvAnnotationsRefresh(t.id);
   }catch(e){
     if(t) showErr(t, "Could not delete the annotation: " + (e.message || e));
+    if(t) mdvAnnotationsRefresh(t.id); // rollback: the store still holds it
   }
 }
 // Caret position -> flat offset, used for click-to-edit on painted highlights.
