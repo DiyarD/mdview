@@ -1096,6 +1096,65 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
                 .and_then(|ok| serde_json::to_string(&ok).map_err(|e| e.to_string()));
             send_ipc_result(&proxy, &id, res);
         }
+        "annotation_list" => {
+            let doc_id = v.get("doc_id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let res = db_lock()
+                .and_then(|s| s.annotation_list(doc_id).map_err(|e| e.to_string()))
+                .and_then(|rows| serde_json::to_string(&rows).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        // The bridge reserves `id` for request correlation — annotation ids
+        // travel as `annotation_id`, never `id`.
+        "annotation_add" => {
+            let doc_id = v.get("doc_id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let exact = v.get("exact").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let prefix = v.get("prefix").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let suffix = v.get("suffix").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let start = v.get("start").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let end = v.get("end").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let color = v.get("color").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let res = db_lock()
+                .and_then(|s| {
+                    s.annotation_add(doc_id, &exact, &prefix, &suffix, start, end, &color, &note)
+                        .map_err(|e| e.to_string())
+                })
+                .and_then(|a| serde_json::to_string(&a).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "annotation_update" => {
+            let aid = v.get("annotation_id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let color = v.get("color").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let note = v.get("note").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let res = db_lock()
+                .and_then(|s| s.annotation_update(aid, &color, &note).map_err(|e| e.to_string()))
+                .and_then(|ok| serde_json::to_string(&ok).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "annotation_refresh_anchor" => {
+            // System path: re-resolved offsets/context/state after a re-render.
+            // `exact` is not accepted — the stored quote is never rewritten.
+            let aid = v.get("annotation_id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let prefix = v.get("prefix").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let suffix = v.get("suffix").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let start = v.get("start").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let end = v.get("end").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let state = v.get("state").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let res = db_lock()
+                .and_then(|s| {
+                    s.annotation_refresh_anchor(aid, &prefix, &suffix, start, end, &state)
+                        .map_err(|e| e.to_string())
+                })
+                .and_then(|ok| serde_json::to_string(&ok).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "annotation_delete" => {
+            let aid = v.get("annotation_id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let res = db_lock()
+                .and_then(|s| s.annotation_delete(aid).map_err(|e| e.to_string()))
+                .and_then(|ok| serde_json::to_string(&ok).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
         "find_similar" => {
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let source_ref = v.get("source_ref").and_then(|x| x.as_str()).unwrap_or("").to_string();

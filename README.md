@@ -26,6 +26,7 @@ unplugged.
   - [The contents pill](#the-contents-pill)
   - [Theme, width and text size](#theme-width-and-text-size)
 - [Saved documents](#saved-documents)
+- [Highlights and notes](#highlights-and-notes)
 - [Printing and PDF](#printing-and-pdf)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Command line](#command-line)
@@ -247,11 +248,43 @@ document never writes to it.
   **Dismiss** — never a forced swap, and nothing is merged automatically.
   Identical content is recognised silently as "already saved"; heavily edited
   texts are matched with a SimHash signature (plus an exact-hash fast path).
-- **Ready for annotations** — the store carries a reserved `annotations`
-  table and an auto-save hook, so the upcoming highlight/annotation feature
-  can attach its data to a stable document identity instead of guessing.
 - **Nothing is lost** — a save is a single transaction; deleting the database
   file simply clears the library, and mdview recreates it empty.
+
+## Highlights and notes
+
+Select any passage in a rendered document and you get a small inline editor:
+pick one of five colors, optionally add a note, and save. Annotations are
+always stored separately from the document — highlighting never edits the
+markdown, not in the file, not in the database blob.
+
+- **Identity first, ink second** — highlighting a document that was never
+  saved automatically saves it to the internal store, so the highlight always
+  has a stable document to hang off. Annotating is the one action that writes
+  to the database without asking first, and it is deliberate: highlights on a
+  phantom identity would be worthless.
+- **Stored in the database** — annotations live in their own `annotations`
+  table keyed by the document's id (cascade-deleted with it). Anchors are
+  stored verbatim: the exact quoted text, ~64 characters of context on each
+  side, and the start/end offsets. Nothing is normalized or rewritten.
+- **Survives edits** — re-anchoring runs on every render, in order: verify
+  the stored offsets against the stored quote (nothing moved), else find the
+  quote by content and disambiguate duplicates by their surrounding context;
+  a unique occurrence always re-anchors, an indistinguishable duplicate never
+  does. Editors, renderer output and document order can all shift around a
+  highlight and it will come back to the right passage.
+- **Needs review, never silent misplacement** — when the passage was deleted
+  or rewritten, or duplicated byte-for-byte including its context, the
+  annotation is marked **needs review** instead of attaching to possibly
+  wrong text. It is never re-pointed at a guess; if the original text
+  returns, the next render restores it automatically.
+- **Panel** — the toolbar highlighter button (or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>) opens a quiet side panel listing the
+  document's highlights in reading order; orphaned ones carry a **needs
+  review** chip. Click one to jump to it; its motion honors
+  prefers-reduced-motion.
+- **Painted natively** — highlights paint with the CSS Custom Highlight API,
+  so the rendered HTML is never rewritten, duplicated or wrapped. Delete is
+  available from the editor with the same two-click confirm used elsewhere.
 
 ---
 
@@ -407,7 +440,7 @@ this is **Windows-only as written**.
 ```powershell
 cargo run                                          # debug
 cargo build --release                              # -> target\release\mdview.exe
-cargo test --release                               # 46 tests + 1 doc-fixture test
+cargo test --release                               # 50 tests + 1 doc-fixture test
 ```
 
 The project has no build script and no code generation. Vendored renderer assets
@@ -511,9 +544,10 @@ Honest list, so nobody has to rediscover these:
   limits the blast radius, but this is not a hardened HTML sanitiser.
 - **Task-list checkboxes are display-only**, so pasted documents stay
   byte-identical to their source.
-- **The `annotations` table is reserved, not wired up.** It exists only so the
-  highlight/annotation feature has a stable document identity from day one;
-  there is no annotation UI yet, and the table stays empty until that lands.
+- **Annotations are stored verbatim but not offset-proof against arbitrary
+  rewrites.** A highlight survives edits that move or duplicate passages;
+  it does not survive its passage being rewritten, and indistinguishable
+  duplicates are marked needs review rather than guessed.
 
 ---
 
@@ -531,20 +565,25 @@ docs/demo/field-notes.md   the document every screenshot is taken from
 docs/screenshots/          generated screenshots
 ```
 
-There are 46 unit tests covering the renderer, table wrapping, media URL
+There are 50 unit tests covering the renderer, table wrapping, media URL
 resolution, vendored-asset inflation, preferences, the local-media gate and the
-document database (schema migration, compression round-trips, FTS search,
-ranking, fuzzy matching, deletion and annotation cascade, auto-save idempotency
-and cross-source identity).
+document database (idempotent open, compression round-trips, FTS search,
+ranking, fuzzy matching, deletion and annotation cascade, annotation
+validation and verbatim anchor storage, re-anchor persistence, auto-save
+idempotency and cross-source identity).
 
 UI behavior is tested against the real page by `node tools/test-ui.js`. It
 assembles the interface exactly like the screenshots below, but with a
 stateful fake document store behind the IPC boundary, then drives headless
 Chrome through the flows the user actually performs: paste a document, save it
 with the Save button, double-click a tab to rename it (Enter commits), open
-**Saved documents** on the empty tab, search (debounced) and click the result —
-and verifies the similarity offer swaps in the saved document only on explicit
-**Open saved**. It exits non-zero if any of that breaks.
+**Saved documents** on the empty tab, search (debounced) and click the result,
+annotate the unsaved tab (it auto-saves first), edit and delete the annotation
+through the real UI, and verifies the similarity offer swaps in the saved
+document only on explicit **Open saved**. The anchor resolver is exercised
+directly against the edge cases that break naive anchoring: inserted text,
+deleted passages, duplicate quotes with and without distinguishable context,
+emoji offsets, document edges. It exits non-zero if any of that breaks.
 
 ### Regenerating the screenshots
 
@@ -572,7 +611,7 @@ Other tools:
 | Tool | Purpose |
 |---|---|
 | `tools/page-harness.js` | Shared page assembly + headless-Chrome driver for the browser tools |
-| `tools/test-ui.js` | Behavioral test of the real page: paste → save → rename → search → open → similarity offer |
+| `tools/test-ui.js` | Behavioral test of the real page: paste → save → rename → search → open → similarity offer → annotate → anchor resolver |
 | `tools/vendor-assets.py` | Re-gzip vendored renderer assets in place |
 | `tools/build-preview.js` | Assemble a standalone `preview-theme.html` for CSS work |
 | `tools/check-syntax.js` | Syntax-check the frontend sources |

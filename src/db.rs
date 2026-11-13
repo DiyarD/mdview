@@ -11,8 +11,14 @@
 // - Identity is never inferred from content alone. `find_similar` only returns
 //   candidates; the caller decides whether to offer them. Two different files
 //   with identical content stay two documents unless they share a source.
+// - Annotations are a separate table keyed by document id. They never touch
+//   the content blob; deleting a document cascades to its annotations.
+//   Anchors are stored verbatim (never normalized): the exact selected text,
+//   a fixed-size prefix/suffix context, and JS string offsets into the
+//   rendered text. Rust validates structure only; it never rewrites them.
 // - All SQL is parameterized. User content is never interpolated into SQL.
-// - The schema is versioned with `PRAGMA user_version`; migrations are additive.
+// - The schema is created with CREATE TABLE IF NOT EXISTS; there is no
+//   versioning — this is the first release of the store.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -22,7 +28,6 @@ use serde::Serialize;
 
 use crate::{truncate_str, MAX_MD_BYTES};
 
-pub const DB_VERSION: i64 = 1;
 pub const MAX_TITLE_LEN: usize = 200;
 pub const MAX_SEARCH_LIMIT: usize = 50;
 pub const DEFAULT_SEARCH_LIMIT: usize = 20;
@@ -34,6 +39,18 @@ pub const SIMHASH_THRESHOLD: u32 = 12;
 /// runs, but fuzzy matching does not.
 pub const SIMHASH_MIN_WORDS: usize = 12;
 pub const PREVIEW_LEN: usize = 200;
+/// Bound on the anchor quote stored per annotation. A highlight longer than
+/// this is almost always a selection mistake; rejecting it beats storing a
+/// corrupt anchor.
+pub const MAX_ANCHOR_BYTES: usize = 16 * 1024;
+/// Bound on the stored prefix/suffix context per annotation.
+pub const MAX_CONTEXT_BYTES: usize = 4 * 1024;
+/// Bound on a note attached to an annotation.
+pub const MAX_NOTE_BYTES: usize = 8 * 1024;
+/// Offsets are JS (UTF-16) string positions into the rendered text; the
+/// renderer's output is bounded by MAX_MD_BYTES, so offsets are too.
+pub const MAX_OFFSET_UNITS: i64 = MAX_MD_BYTES as i64;
+pub const ANNOTATION_COLORS: [&str; 5] = ["yellow", "green", "blue", "pink", "purple"];
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Document {
@@ -53,6 +70,28 @@ pub struct Document {
 pub struct SavedDoc {
     pub id: i64,
     pub title: String,
+    pub updated_at: i64,
+}
+
+/// A highlight/note anchored to a saved document. The anchor is a W3C-style
+/// selector bundle: `exact` (the selected text, verbatim), `prefix`/`suffix`
+/// (fixed context, verbatim) and `start`/`end` (JS string offsets into the
+/// rendered text). `state` is `active` when the anchor currently resolves and
+/// `orphan` when the passage no longer exists or is ambiguous — orphans are
+/// kept, never silently re-pointed.
+#[derive(Debug, Clone, Serialize)]
+pub struct Annotation {
+    pub id: i64,
+    pub document_id: i64,
+    pub exact: String,
+    pub prefix: String,
+    pub suffix: String,
+    pub start: i64,
+    pub end: i64,
+    pub color: String,
+    pub note: String,
+    pub state: String,
+    pub created_at: i64,
     pub updated_at: i64,
 }
 
@@ -121,14 +160,20 @@ CREATE INDEX IF NOT EXISTS idx_documents_words ON documents(word_count);
 CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
   title, content, tokenize='trigram'
 );
--- Reserved for the future highlight/annotation feature. The auto-save hook
--- guarantees a documents row exists before any annotation references it.
+-- Annotations live apart from the content blob: highlighting never edits the
+-- document. `state` is 'active' | 'orphan'; orphans are kept for review,
+-- never re-pointed at a guess.
 CREATE TABLE IF NOT EXISTS annotations (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
-  anchor TEXT NOT NULL,
-  color TEXT NOT NULL DEFAULT 'yellow',
+  exact TEXT NOT NULL,
+  prefix TEXT NOT NULL DEFAULT '',
+  suffix TEXT NOT NULL DEFAULT '',
+  start_offset INTEGER NOT NULL CHECK (start_offset >= 0),
+  end_offset INTEGER NOT NULL CHECK (end_offset > start_offset),
+  color TEXT NOT NULL DEFAULT 'yellow' CHECK (color IN ('yellow', 'green', 'blue', 'pink', 'purple')),
   note TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'orphan')),
   created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL
 );
@@ -143,7 +188,7 @@ impl Store {
         let conn = Connection::open(path)?;
         let store = Store { conn };
         store.configure()?;
-        store.migrate()?;
+        store.conn.execute_batch(SCHEMA)?;
         Ok(store)
     }
 
@@ -152,7 +197,7 @@ impl Store {
         let conn = Connection::open_in_memory()?;
         let store = Store { conn };
         store.configure()?;
-        store.migrate()?;
+        store.conn.execute_batch(SCHEMA)?;
         Ok(store)
     }
 
@@ -164,22 +209,6 @@ impl Store {
         let _ = self.conn.pragma_update(None, "synchronous", "NORMAL");
         let _ = self.conn.pragma_update(None, "busy_timeout", 5000i64);
         let _ = self.conn.pragma_update(None, "foreign_keys", true);
-        Ok(())
-    }
-
-    fn migrate(&self) -> rusqlite::Result<()> {
-        let version: i64 = self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > DB_VERSION {
-            return Err(db_err(format!(
-                "database version {version} is newer than this app ({DB_VERSION})"
-            )));
-        }
-        if version < 1 {
-            self.conn.execute_batch(SCHEMA)?;
-            self.conn
-                .execute_batch(&format!("PRAGMA user_version = {DB_VERSION};"))?;
-        }
-        // Future migrations: each gated on `version < N`, then bump DB_VERSION.
         Ok(())
     }
 
@@ -498,6 +527,125 @@ impl Store {
         Ok(n > 0)
     }
 
+    /// Store a highlight/note for a saved document. The anchor fields are
+    /// kept verbatim — nothing about the selected text is normalized or
+    /// rewritten. Errors (not silent coercion) on bad input.
+    #[allow(clippy::too_many_arguments)]
+    pub fn annotation_add(
+        &self,
+        document_id: i64,
+        exact: &str,
+        prefix: &str,
+        suffix: &str,
+        start: i64,
+        end: i64,
+        color: &str,
+        note: &str,
+    ) -> rusqlite::Result<Annotation> {
+        validate_anchor(exact, prefix, suffix, start, end)?;
+        validate_color(color)?;
+        validate_note(note)?;
+        let exists: i64 = self
+            .conn
+            .query_row("SELECT count(*) FROM documents WHERE id = ?1", params![document_id], |r| r.get(0))?;
+        if exists == 0 {
+            return Err(db_err("document not found"));
+        }
+        let ts = now();
+        self.conn.execute(
+            "INSERT INTO annotations
+               (document_id, exact, prefix, suffix, start_offset, end_offset, color, note, state, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'active', ?9, ?9)",
+            params![document_id, exact, prefix, suffix, start, end, color, note, ts],
+        )?;
+        let id = self.conn.last_insert_rowid();
+        Ok(Annotation {
+            id,
+            document_id,
+            exact: exact.to_string(),
+            prefix: prefix.to_string(),
+            suffix: suffix.to_string(),
+            start,
+            end,
+            color: color.to_string(),
+            note: note.to_string(),
+            state: "active".to_string(),
+            created_at: ts,
+            updated_at: ts,
+        })
+    }
+
+    /// List annotations for a document in reading order.
+    pub fn annotation_list(&self, document_id: i64) -> rusqlite::Result<Vec<Annotation>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, document_id, exact, prefix, suffix, start_offset, end_offset,
+                    color, note, state, created_at, updated_at
+             FROM annotations WHERE document_id = ?1
+             ORDER BY start_offset ASC, id ASC",
+        )?;
+        let rows = stmt.query_map(params![document_id], annotation_from_row)?;
+        rows.collect()
+    }
+
+    /// User edits to an annotation: color and note only. The anchor is never
+    /// rewritten by this path — that is `annotation_refresh_anchor`'s job.
+    /// Returns false when the id does not exist.
+    pub fn annotation_update(
+        &self,
+        id: i64,
+        color: &str,
+        note: &str,
+    ) -> rusqlite::Result<bool> {
+        validate_color(color)?;
+        validate_note(note)?;
+        let n = self.conn.execute(
+            "UPDATE annotations SET color = ?1, note = ?2, updated_at = ?3 WHERE id = ?4",
+            params![color, note, now(), id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Re-anchoring after a re-render: new offsets, fresh surrounding context,
+    /// and the resolved state. `exact` is deliberately not accepted — the
+    /// stored quote is the canonical claim and is never rewritten.
+    /// Only writes when something actually changed; returns whether it did.
+    pub fn annotation_refresh_anchor(
+        &self,
+        id: i64,
+        prefix: &str,
+        suffix: &str,
+        start: i64,
+        end: i64,
+        state: &str,
+    ) -> rusqlite::Result<bool> {
+        if prefix.len() > MAX_CONTEXT_BYTES || suffix.len() > MAX_CONTEXT_BYTES {
+            return Err(db_err("annotation context is too large"));
+        }
+        if start < 0 || end <= start || end > MAX_OFFSET_UNITS {
+            return Err(db_err("annotation offsets are out of range"));
+        }
+        if state != "active" && state != "orphan" {
+            return Err(db_err("unknown annotation state"));
+        }
+        let n = self.conn.execute(
+            "UPDATE annotations SET prefix = ?1, suffix = ?2, start_offset = ?3, end_offset = ?4,
+                                   state = ?5, updated_at = ?6
+             WHERE id = ?7
+               AND (prefix <> ?1 OR suffix <> ?2 OR start_offset <> ?3
+                    OR end_offset <> ?4 OR state <> ?5)",
+            params![prefix, suffix, start, end, state, now(), id],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Idempotent delete; annotations carry no FTS entry to clean up.
+    pub fn annotation_delete(&self, id: i64) -> rusqlite::Result<bool> {
+        let n = self
+            .conn
+            .execute("DELETE FROM annotations WHERE id = ?1", params![id])?;
+        Ok(n > 0)
+    }
+
     /// Find a stored document that may be the same logical document as `text`.
     ///
     /// Exact content-hash matches are returned first. Otherwise a SimHash
@@ -657,6 +805,53 @@ fn db_err(msg: impl Into<String>) -> rusqlite::Error {
         rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
         Some(msg.into()),
     )
+}
+
+fn validate_anchor(exact: &str, prefix: &str, suffix: &str, start: i64, end: i64) -> rusqlite::Result<()> {
+    if exact.trim().is_empty() {
+        return Err(db_err("annotation has no selected text"));
+    }
+    if exact.len() > MAX_ANCHOR_BYTES {
+        return Err(db_err(format!("selected text is larger than {} KB", MAX_ANCHOR_BYTES / 1024)));
+    }
+    if prefix.len() > MAX_CONTEXT_BYTES || suffix.len() > MAX_CONTEXT_BYTES {
+        return Err(db_err("annotation context is too large"));
+    }
+    if start < 0 || end <= start || end > MAX_OFFSET_UNITS {
+        return Err(db_err("annotation offsets are out of range"));
+    }
+    Ok(())
+}
+
+fn validate_color(color: &str) -> rusqlite::Result<()> {
+    if !ANNOTATION_COLORS.contains(&color) {
+        return Err(db_err("unsupported annotation color"));
+    }
+    Ok(())
+}
+
+fn validate_note(note: &str) -> rusqlite::Result<()> {
+    if note.len() > MAX_NOTE_BYTES {
+        return Err(db_err(format!("note is larger than {} KB", MAX_NOTE_BYTES / 1024)));
+    }
+    Ok(())
+}
+
+fn annotation_from_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Annotation> {
+    Ok(Annotation {
+        id: r.get(0)?,
+        document_id: r.get(1)?,
+        exact: r.get(2)?,
+        prefix: r.get(3)?,
+        suffix: r.get(4)?,
+        start: r.get(5)?,
+        end: r.get(6)?,
+        color: r.get(7)?,
+        note: r.get(8)?,
+        state: r.get(9)?,
+        created_at: r.get(10)?,
+        updated_at: r.get(11)?,
+    })
 }
 
 fn now() -> i64 {
@@ -1089,18 +1284,118 @@ mod tests {
     fn delete_cascades_to_annotations() {
         let s = store();
         let doc = save(&s, "Doomed", "body", "");
-        s.conn
-            .execute(
-                "INSERT INTO annotations (document_id, anchor, color, note, created_at, updated_at) VALUES (?1, '{}', 'yellow', 'n', 1, 1)",
-                params![doc.id],
-            )
-            .unwrap();
+        s.annotation_add(doc.id, "body", "", "", 0, 4, "green", "").unwrap();
         assert!(s.delete(doc.id).unwrap());
-        let n: i64 = s
-            .conn
-            .query_row("SELECT count(*) FROM annotations WHERE document_id = ?1", params![doc.id], |r| r.get(0))
+        assert!(s.annotation_list(doc.id).unwrap().is_empty());
+    }
+
+    #[test]
+    fn annotation_crud_roundtrip() {
+        let s = store();
+        let doc = save(&s, "Doc", "hello world", "");
+        let a = s
+            .annotation_add(doc.id, "hello", "", " world", 0, 5, "blue", "note text")
             .unwrap();
-        assert_eq!(n, 0);
+        assert_eq!(a.id, 1);
+        assert_eq!(a.state, "active");
+        let list = s.annotation_list(doc.id).unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].exact, "hello");
+        assert_eq!(list[0].suffix, " world");
+        assert_eq!(list[0].note, "note text");
+        assert_eq!(list[0].created_at, a.created_at);
+        assert_eq!(list[0].updated_at, list[0].created_at);
+        // User edit: color/note only.
+        assert!(s.annotation_update(a.id, "pink", "edited").unwrap());
+        let list = s.annotation_list(doc.id).unwrap();
+        assert_eq!(list[0].color, "pink");
+        assert_eq!(list[0].note, "edited");
+        // Verbatim anchor survives an edit untouched.
+        assert_eq!(list[0].exact, "hello");
+        assert_eq!(list[0].start, 0);
+        assert_eq!(list[0].end, 5);
+        assert!(s.annotation_delete(a.id).unwrap());
+        assert!(s.annotation_list(doc.id).unwrap().is_empty());
+        // Deleting twice is not an error.
+        assert!(!s.annotation_delete(a.id).unwrap());
+        assert!(!s.annotation_update(a.id, "blue", "x").unwrap());
+    }
+
+    #[test]
+    fn annotation_anchor_is_stored_verbatim() {
+        let s = store();
+        let doc = save(&s, "Unicode", "body", "");
+        let exact = "a  b\tс\u{1F600}d"; // multibyte + emoji stay byte-exact
+        let a = s.annotation_add(doc.id, exact, "pre  fix\u{1F600}", "suf\nfix", 3, 3 + 10, "purple", "n").unwrap();
+        let got = s.annotation_list(doc.id).unwrap().pop().unwrap();
+        assert_eq!(got.exact, exact);
+        assert_eq!(got.prefix, "pre  fix\u{1F600}");
+        assert_eq!(got.suffix, "suf\nfix");
+        assert_eq!(got.created_at, a.created_at);
+    }
+
+    #[test]
+    fn annotation_rejects_bad_input() {
+        let s = store();
+        let doc = save(&s, "Doc", "body", "");
+        // Missing document.
+        assert!(s.annotation_add(999, "body", "", "", 0, 4, "blue", "").is_err());
+        // Empty selection.
+        assert!(s.annotation_add(doc.id, "   ", "", "", 0, 4, "blue", "").is_err());
+        // Inverted/zero-width offsets.
+        assert!(s.annotation_add(doc.id, "body", "", "", 4, 4, "blue", "").is_err());
+        assert!(s.annotation_add(doc.id, "body", "", "", -1, 4, "blue", "").is_err());
+        // Unknown color — rejected, not coerced.
+        assert!(s.annotation_add(doc.id, "body", "", "", 0, 4, "red", "").is_err());
+        assert!(s.annotation_add(doc.id, "body", "", "", 0, 4, "", "").is_err());
+        // Oversized inputs.
+        let big = "x".repeat(MAX_ANCHOR_BYTES + 1);
+        assert!(s.annotation_add(doc.id, &big, "", "", 0, 4, "blue", "").is_err());
+        let big_note = "x".repeat(MAX_NOTE_BYTES + 1);
+        assert!(s.annotation_add(doc.id, "body", "", "", 0, 4, "blue", &big_note).is_err());
+        let big_ctx = "x".repeat(MAX_CONTEXT_BYTES + 1);
+        assert!(s.annotation_add(doc.id, "body", &big_ctx, "", 0, 4, "blue", "").is_err());
+        // Bad refresh state.
+        let a = s.annotation_add(doc.id, "body", "", "", 0, 4, "blue", "").unwrap();
+        assert!(s.annotation_refresh_anchor(a.id, "", "", 0, 4, "unresolved").is_err());
+    }
+
+    #[test]
+    fn annotation_refresh_anchor_only_writes_on_change() {
+        let s = store();
+        let doc = save(&s, "Doc", "hello brave new world", "");
+        let a = s.annotation_add(doc.id, "brave", "hello ", " new", 6, 11, "yellow", "").unwrap();
+        // Identical refresh: no write, same updated_at.
+        let before = s.annotation_list(doc.id).unwrap().pop().unwrap();
+        assert!(!s.annotation_refresh_anchor(a.id, "hello ", " new", 6, 11, "active").unwrap());
+        let same = s.annotation_list(doc.id).unwrap().pop().unwrap();
+        assert_eq!(same.updated_at, before.updated_at);
+        // Shifted text resolves to new offsets: persisted once, orphaning keeps the anchor.
+        assert!(s.annotation_refresh_anchor(a.id, "hello n", " new", 12, 17, "active").unwrap());
+        let moved = s.annotation_list(doc.id).unwrap().pop().unwrap();
+        assert_eq!(moved.start, 12);
+        assert_eq!(moved.prefix, "hello n");
+        assert_eq!(moved.exact, "brave"); // quote never rewritten
+        // Orphan state round-trips.
+        assert!(s.annotation_refresh_anchor(a.id, "hello n", " new", 12, 17, "orphan").unwrap());
+        assert_eq!(s.annotation_list(doc.id).unwrap().pop().unwrap().state, "orphan");
+        assert!(s.annotation_refresh_anchor(a.id, "hello n", " new", 12, 17, "active").unwrap());
+        assert_eq!(s.annotation_list(doc.id).unwrap().pop().unwrap().state, "active");
+    }
+
+    #[test]
+    fn auto_saved_document_carries_annotation() {
+        let s = store();
+        // The annotation flow starts by auto-saving an unsaved document.
+        let d = s.auto_save("pasted", "unsaved body", "", "paste", "").unwrap();
+        let a = s.annotation_add(d.id, "unsaved", "", " body", 0, 7, "green", "remember this").unwrap();
+        let got = s.annotation_list(d.id).unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].note, "remember this");
+        // Deleting the document cascades the annotation away.
+        assert!(s.delete(d.id).unwrap());
+        assert_eq!(s.annotation_list(d.id).unwrap().len(), 0);
+        let _ = a;
     }
 
     #[test]
@@ -1141,36 +1436,17 @@ mod tests {
     }
 
     #[test]
-    fn migration_from_v0_creates_schema() {
+    fn reopening_a_database_is_idempotent() {
         let dir = std::env::temp_dir().join(format!("mdview-migrate-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("docs.db");
-        {
-            let conn = Connection::open(&path).unwrap();
-            conn.execute_batch("PRAGMA user_version = 0;").unwrap();
-        }
+        let first = Store::open(&path).unwrap();
+        let doc = save(&first, "Kept", "body", "");
+        drop(first);
+        // Opening the same file again must not fail or clobber existing rows.
         let s = Store::open(&path).unwrap();
-        let doc = save(&s, "Migrated", "body", "");
-        assert!(s.open_document(doc.id).unwrap().is_some());
-        let v: i64 = s
-            .conn
-            .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(v, DB_VERSION);
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn future_db_version_is_rejected() {
-        let dir = std::env::temp_dir().join(format!("mdview-future-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("docs.db");
-        {
-            let conn = Connection::open(&path).unwrap();
-            conn.execute_batch("PRAGMA user_version = 999;").unwrap();
-        }
-        let err = Store::open(&path).unwrap_err().to_string();
-        assert!(err.contains("newer than this app"), "{err}");
+        let got = s.open_document(doc.id).unwrap().expect("document survives reopen");
+        assert_eq!(got.text, "body");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

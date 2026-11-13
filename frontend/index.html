@@ -415,6 +415,69 @@
        quote bars, code blocks) still honours the reader's choice. */
     .markdown-body .mermaid svg{ -webkit-print-color-adjust:exact; print-color-adjust:exact; }
   }
+  /* Highlights & notes: a right-hand reading panel and an inline editor —
+     same whisper-not-modal philosophy as the similarity banner. */
+  #annToggle{ display:inline-flex; align-items:center; gap:4px; }
+  #annToggle svg{ display:block; width:15px; height:15px; }
+  #annToggle[aria-pressed="true"]{ color:var(--accent); }
+  #annCount{ display:inline-block; color:var(--quote); font-size:10px; font-variant-numeric:tabular-nums; }
+  #annPanel{ position:fixed; z-index:120; top:calc(var(--bar-h) + 10px); right:12px; bottom:14px;
+    width:min(340px,calc(100vw - 24px)); display:flex; flex-direction:column;
+    color:var(--fg); background:color-mix(in srgb, var(--card) 96%, transparent);
+    border:1px solid var(--border); border-radius:14px; box-shadow:var(--shadow);
+    -webkit-backdrop-filter:blur(12px); backdrop-filter:blur(12px); overflow:hidden; }
+  #annPanel[hidden], #annEditor[hidden]{ display:none !important; }
+  .ann-head{ display:flex; align-items:center; justify-content:space-between; gap:8px;
+    padding:13px 14px; border-bottom:1px solid var(--border); }
+  .ann-title{ font:600 13px/1.2 var(--sans); }
+  .ann-sub{ color:var(--quote); font-size:11px; margin-top:4px; max-width:230px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ann-list{ overflow:auto; padding:8px; flex:1; min-height:0; }
+  .ann-empty{ padding:24px 14px; color:var(--quote); font:12px/1.65 var(--sans); text-align:center; }
+  .ann-item{ padding:11px 10px; border:1px solid transparent; border-radius:10px; cursor:pointer;
+    margin-bottom:4px; transition:background .15s, border-color .15s; }
+  .ann-item:hover{ background:var(--drop); border-color:var(--border); }
+  .ann-item:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .ann-quote{ font:12px/1.55 var(--serif); display:-webkit-box; -webkit-line-clamp:3;
+    -webkit-box-orient:vertical; overflow:hidden; }
+  .ann-note{ font:11.5px/1.5 var(--sans); color:var(--quote); margin-top:5px;
+    white-space:pre-wrap; overflow-wrap:anywhere; }
+  .ann-meta{ display:flex; align-items:center; gap:6px; margin-top:8px; color:var(--quote); font:10px var(--sans); }
+  .ann-dot{ width:8px; height:8px; border-radius:50%; flex:none; box-shadow:0 0 0 1px rgba(0,0,0,.12); }
+  .ann-orphan{ margin-left:auto; padding:2px 7px; border-radius:999px;
+    background:rgba(198,124,43,.14); color:#b0722a; font:600 9.5px var(--sans);
+    letter-spacing:.04em; text-transform:uppercase; }
+  html.dark .ann-orphan{ color:#d8a25a; }
+  #annEditor{ position:fixed; z-index:140; width:min(330px,calc(100vw - 20px)); padding:12px;
+    background:var(--card); color:var(--fg); border:1px solid var(--border); border-radius:13px;
+    box-shadow:0 8px 28px rgba(0,0,0,.16); font:12px var(--sans); }
+  .ann-editor-quote{ font:12px/1.55 var(--serif); max-height:76px; overflow:auto; margin:0 0 10px;
+    padding:8px 9px; background:var(--drop); border-radius:8px; overflow-wrap:anywhere; }
+  .ann-colors{ display:flex; align-items:center; gap:9px; margin:8px 0 10px; }
+  .ann-color{ width:21px; height:21px; border-radius:50%; border:2px solid transparent;
+    outline:1px solid var(--border); cursor:pointer; padding:0; }
+  .ann-color[aria-pressed="true"]{ outline:2px solid var(--accent); outline-offset:2px; }
+  .ann-textarea{ display:block; width:100%; min-height:66px; resize:vertical; box-sizing:border-box;
+    background:var(--bg); color:var(--fg); border:1px solid var(--border); border-radius:8px;
+    padding:8px; font:12px/1.5 var(--sans); outline-offset:2px; }
+  .ann-textarea:focus{ outline:2px solid var(--accent); }
+  .ann-editor-actions{ display:flex; align-items:center; justify-content:flex-end; gap:7px; margin-top:10px; }
+  .ann-editor-actions .btn.danger{ color:#a64c40; }
+  .ann-editor-actions .btn.danger.armed{ background:rgba(166,76,64,.14); border-color:#a64c40; }
+  ::highlight(mdv-ann-yellow){ background:rgba(239,197,88,.58); color:inherit; }
+  ::highlight(mdv-ann-green){ background:rgba(137,184,130,.52); color:inherit; }
+  ::highlight(mdv-ann-blue){ background:rgba(123,171,218,.48); color:inherit; }
+  ::highlight(mdv-ann-pink){ background:rgba(220,143,162,.48); color:inherit; }
+  ::highlight(mdv-ann-purple){ background:rgba(174,151,220,.5); color:inherit; }
+  html.dark ::highlight(mdv-ann-yellow){ background:rgba(185,139,46,.62); }
+  html.dark ::highlight(mdv-ann-green){ background:rgba(90,142,88,.58); }
+  html.dark ::highlight(mdv-ann-blue){ background:rgba(76,127,175,.62); }
+  html.dark ::highlight(mdv-ann-pink){ background:rgba(166,88,109,.62); }
+  html.dark ::highlight(mdv-ann-purple){ background:rgba(123,96,174,.62); }
+  @media (max-width:600px){
+    #annPanel{ right:8px; top:calc(var(--bar-h) + 8px); bottom:8px; width:min(330px,calc(100vw - 16px)); }
+  }
+  @media (prefers-reduced-motion: reduce){ .ann-item{ transition:none; } }
 </style>
 </head>
 <body>
@@ -426,9 +489,21 @@
   <button class="ctl" id="fs" title="Fullscreen (F11)">⛶</button>
   <button class="ctl" id="save" title="Save document (Ctrl+S)" aria-pressed="false" aria-label="Save document"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h7.4L17 7.1V15a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 15Z"/><path d="M7 3v6h6V3M7.5 13h5"/></svg></button>
   <input id="width" type="range" min="620" max="1180" step="10" value="860" title="Reading width — also [ / ] or Alt+Left/Right">
+  <button class="ctl" id="annToggle" title="Highlights and notes (Ctrl+Shift+A)" aria-pressed="false" aria-label="Highlights and notes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 12.6 11.9 5.2a1.4 1.4 0 0 1 2 0l1.4 1.4a1.4 1.4 0 0 1 0 2l-7.4 7.4L4 17l.5-4.4Z"/><path d="M9.8 7.3l3.4 3.4"/></svg> <span id="annCount" aria-hidden="true"></span></button>
   <button class="ctl" id="theme" title="Toggle light/dark">◐</button>
 </div>
 <div id="views"></div>
+<aside id="annPanel" hidden aria-label="Highlights and notes">
+  <div class="ann-head">
+    <div>
+      <div class="ann-title">Highlights &amp; notes</div>
+      <div class="ann-sub" id="annSubtitle">This document</div>
+    </div>
+    <button class="ctl" id="annClose" title="Close panel" aria-label="Close panel">×</button>
+  </div>
+  <div class="ann-list" id="annList"></div>
+</aside>
+<div id="annEditor" hidden role="dialog" aria-modal="false" aria-label="Edit highlight"></div>
 <div id="toc" hidden>
   <div id="tocBox">
     <button class="dock l" id="tocLeft" aria-label="Move contents pill left"><svg viewBox="0 0 8 12" aria-hidden="true"><path d="M7 1.5 2.5 6 7 10.5"/></svg></button>
@@ -589,10 +664,13 @@ function switchTab(id){
   buildToc(); // contents follow the newly visible page
   updateSaveState();
   updateWindowTitle();
+  annUpdateBadge();
+  annRenderPanelList();
 }
 function closeTab(id){
   tabs = tabs.filter(t=>t.id!==id);
   const v = document.getElementById("view-"+id); if(v) v.remove();
+  annForgetTab(id);
   if(!tabs.length){ newTab(); return; }
   if(activeId===id) switchTab(tabs[tabs.length-1].id);
   // The strip always reflects the array: a structural change must repaint.
@@ -669,6 +747,7 @@ async function saveCurrent(){
     if(!d || typeof d !== "object" || d.id == null) throw new Error("bad response");
     t.savedId = d.id;
     if(d.title) t.name = d.title;
+    if(d.id != null) mdvAnnotationsRefresh(t.id);
     paintTabs();
     updateSaveState();
     updateWindowTitle();
@@ -760,12 +839,14 @@ async function openSavedDocument(id, replaceTab){
     replaceTab.similarDismissed = true;
     paintTabs();
     renderTab(replaceTab);
+    mdvAnnotationsRefresh(replaceTab.id);
     updateSaveState();
     updateWindowTitle();
   } else {
     const t = newTab(d.text, d.title, d.base, d.source_ref);
     t.savedId = d.id;
     t.similarDismissed = true;
+    mdvAnnotationsRefresh(t.id);
     updateSaveState();
   }
 }
@@ -853,6 +934,7 @@ async function confirmDeleteSavedDocument(id, item, container, btn){
     // Any tab still marked saved points at a document the store no longer
     // holds — fall them all back to unsaved rather than claiming otherwise.
     for(const t of tabs){ if(t.savedId === id) t.savedId = null; }
+    mdvAnnotationsInvalidateDoc(id); // its annotations cascade away with it
     updateSaveState();
     item.remove();
     if(!container.isConnected) return;
@@ -890,13 +972,534 @@ async function flushAutoSave(){
         title: t.name, text: t.md, base: t.base||"",
         source_kind: t.sourceKind, source_ref: t.sourceRef
       });
-      if(d && d.id != null){ t.savedId = d.id; updateSaveState(); }
+      if(d && d.id != null){ t.savedId = d.id; updateSaveState(); mdvAnnotationsRefresh(t.id); }
       resolve(d);
     }catch(e){
       showErr(t, "Could not auto-save the document: " + (e.message||e));
       resolve(null);
     }
   }
+}
+
+/* ---------- highlights & annotations ---------- */
+// Annotations are W3C-style selectors against the *rendered* text, not the
+// markdown source: an exact quote plus fixed prefix/suffix context, with
+// JS string offsets kept only as a fast-path hint. The stored quote is never
+// rewritten; orphans are kept and shown as "needs review", never re-pointed.
+// Everything goes through the SQLite store — nothing is kept in localStorage.
+const ANN_CONTEXT = 64; // characters of context stored on each side of a quote
+const ANN_SKIP = "svg, .mermaid, .katex-mathml, script, style, noscript, [aria-hidden='true'], #annPanel, #annEditor";
+const ANN_COLORS = ["yellow", "green", "blue", "pink", "purple"];
+const ANN_HEX = { yellow: "#efc558", green: "#89b882", blue: "#7bafda", pink: "#dc8fa2", purple: "#ae97dc" };
+// Per open tab: DB rows, resolution results and the flat-text caches.
+const annState = new Map(); // tabId -> { rows, resolved: Map(id), flat, seq }
+let annSelectedColor = "yellow";
+let annEditorState = null; // { tabId, anchor?, row?, color, armTimer }
+const annPaintSupported = !!(window.CSS && CSS.highlights && typeof Highlight === "function");
+
+// Flat text = concatenated textContent of the visible article content, with
+// non-content subtrees skipped. Deterministic for a given render, so stored
+// offsets are stable across boots.
+function annFlat(root){
+  const accept = n => {
+    if(!n.nodeValue) return NodeFilter.FILTER_REJECT;
+    const p = n.parentElement;
+    if(!p || p.closest(ANN_SKIP)) return NodeFilter.FILTER_REJECT;
+    return NodeFilter.FILTER_ACCEPT;
+  };
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: accept });
+  const nodes = [], starts = [];
+  let text = "";
+  while(walker.nextNode()){
+    const n = walker.currentNode;
+    starts.push(text.length);
+    nodes.push(n);
+    text += n.nodeValue;
+  }
+  return { text, nodes, starts };
+}
+// Offset of a selection point inside the flat text, or null when the point
+// falls inside a skipped subtree. Element boundaries (select-all) resolve to
+// the start of the next accepted text node, or the end of the flat text.
+function annFlatOffset(flat, root, node, offset){
+  if(node && node.nodeType === 3){ // TEXT_NODE
+    const i = flat.nodes.indexOf(node);
+    if(i < 0) return null;
+    return flat.starts[i] + Math.max(0, Math.min(offset, node.nodeValue.length));
+  }
+  const accept = n => {
+    if(!n.nodeValue) return NodeFilter.FILTER_REJECT;
+    const p = n.parentElement;
+    if(!p || p.closest(ANN_SKIP)) return NodeFilter.FILTER_REJECT;
+    return NodeFilter.FILTER_ACCEPT;
+  };
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, { acceptNode: accept });
+  walker.currentNode = node;
+  const next = walker.nextNode();
+  if(!next) return flat.text.length;
+  const i = flat.nodes.indexOf(next);
+  return i >= 0 ? flat.starts[i] : null;
+}
+// The anchor captured from a live selection. `exact` is sliced from the flat
+// text itself, so it can never disagree with the stored quote.
+function annAnchorFromSelection(root, sel){
+  if(!sel || sel.isCollapsed || !sel.rangeCount) return null;
+  const range = sel.getRangeAt(0);
+  if(!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
+  const flat = annFlat(root);
+  let start = annFlatOffset(flat, root, range.startContainer, range.startOffset);
+  let end = annFlatOffset(flat, root, range.endContainer, range.endOffset);
+  if(start == null || end == null) return null;
+  if(start > end){ const t = start; start = end; end = t; }
+  if(start === end) return null;
+  const exact = flat.text.slice(start, end);
+  if(!exact.trim()) return null;
+  return {
+    exact, start, end,
+    prefix: flat.text.slice(Math.max(0, start - ANN_CONTEXT), start),
+    suffix: flat.text.slice(end, end + ANN_CONTEXT),
+  };
+}
+function annCommonPrefix(a, b){ let n = 0; while(n < a.length && n < b.length && a[n] === b[n]) n++; return n; }
+function annCommonSuffix(a, b){ let n = 0; while(n < a.length && n < b.length && a[a.length - 1 - n] === b[b.length - 1 - n]) n++; return n; }
+// Re-anchor a stored selection against the current flat text. Returns
+// {start, end} when the evidence is sufficient, otherwise null (orphan).
+// Exported on window so the browser test-suite can exercise it directly.
+function resolveAnchor(text, a){
+  const exact = String(a && a.exact || "");
+  if(!exact.trim()) return null;
+  const start = a.start | 0, end = a.end | 0;
+  if(start >= 0 && end > start && end <= text.length && text.slice(start, end) === exact){
+    return { start, end }; // nothing moved: the strongest possible match
+  }
+  const candidates = [];
+  let i = text.indexOf(exact);
+  while(i !== -1){ candidates.push(i); i = text.indexOf(exact, i + 1); }
+  if(!candidates.length) return null;
+  if(candidates.length === 1) return { start: candidates[0], end: candidates[0] + exact.length };
+  // Duplicated passage: only context can disambiguate. A strictly better
+  // candidate with real context agreement wins; a tie is a refusal.
+  const pre = String(a.prefix || ""), suf = String(a.suffix || "");
+  let best = null, bestScore = -1, second = -1;
+  for(const c of candidates){
+    const p = annCommonSuffix(text.slice(Math.max(0, c - pre.length), c), pre);
+    const s = annCommonPrefix(text.slice(c + exact.length, c + exact.length + suf.length), suf);
+    const score = p * 2 + s * 2;
+    if(score > bestScore){ second = bestScore; bestScore = score; best = { start: c, end: c + exact.length, p, s }; }
+    else if(score > second) second = score;
+  }
+  if(best && second < bestScore && (best.p + best.s) >= 8){
+    return { start: best.start, end: best.end };
+  }
+  return null;
+}
+window.mdviewAnnotationsResolve = resolveAnchor;
+function annRangeFromOffsets(flat, start, end){
+  if(start < 0 || end <= start || end > flat.text.length) return null;
+  let sc = null, so = 0, ec = null, eo = 0;
+  for(let i = 0; i < flat.nodes.length; i++){
+    const n = flat.nodes[i], a = flat.starts[i], b = a + n.nodeValue.length;
+    if(!sc && start >= a && start <= b){ sc = n; so = start - a; }
+    if(end >= a && end <= b){ ec = n; eo = end - a; break; }
+  }
+  if(!sc || !ec) return null;
+  try{
+    const r = document.createRange();
+    r.setStart(sc, so);
+    r.setEnd(ec, eo);
+    return r;
+  }catch(_){ return null; }
+}
+function annStateOf(tabId){
+  let s = annState.get(tabId);
+  if(!s){ s = { rows: [], resolved: new Map(), flat: null, seq: 0 }; annState.set(tabId, s); }
+  return s;
+}
+function annForgetTab(tabId){
+  annState.delete(tabId);
+  annRebuildPaint();
+}
+// Repaint every painted highlight from the per-tab resolved state.
+function annRebuildPaint(){
+  if(!annPaintSupported) return;
+  const groups = {};
+  for(const c of ANN_COLORS) groups[c] = [];
+  for(const [tabId, st] of annState){
+    if(!st.resolved.size) continue;
+    const view = document.getElementById("view-" + tabId);
+    if(!view || !view.isConnected){ annState.delete(tabId); continue; }
+    for(const row of st.rows){
+      const res = st.resolved.get(row.id);
+      if(!res) continue;
+      const range = st.flat ? annRangeFromOffsets(st.flat, res.start, res.end) : null;
+      const color = ANN_COLORS.includes(row.color) ? row.color : "yellow";
+      if(range) groups[color].push(range);
+    }
+  }
+  for(const c of ANN_COLORS){
+    const key = "mdv-ann-" + c;
+    try{
+      if(groups[c].length) CSS.highlights.set(key, new Highlight(...groups[c]));
+      else CSS.highlights.delete(key);
+    }catch(e){
+      console.warn("mdview: could not paint highlight ranges", e);
+    }
+  }
+}
+// Fresh truth: list the document's annotations, resolve them against the
+// live render, paint, and persist any re-anchoring that changed something.
+async function mdvAnnotationsRefresh(tabId){
+  const t = tabs.find(x => x.id === tabId);
+  const state = annStateOf(tabId);
+  const seq = ++state.seq;
+  state.rows = []; state.resolved = new Map(); state.flat = null;
+  if(t && t.savedId != null && useIpc()){
+    try{
+      const rows = await dbCall("annotation_list", { doc_id: t.savedId });
+      if(state.seq !== seq) return; // a newer render won the race
+      state.rows = Array.isArray(rows) ? rows : [];
+    }catch(e){
+      if(state.seq === seq && t) showErr(t, "Could not load annotations: " + (e.message || e));
+    }
+  }
+  const view = t ? document.getElementById("view-" + t.id) : null;
+  const root = view ? view.querySelector(".markdown-body") : null;
+  if(t && root && state.rows.length){
+    const flat = annFlat(root);
+    state.flat = flat;
+    for(const row of state.rows){
+      const res = resolveAnchor(flat.text, row);
+      if(res) state.resolved.set(row.id, res);
+      // Persist re-anchoring only when something changed; orphans keep their
+      // stored prefix/suffix so a revert can find them again.
+      const prefix = res ? flat.text.slice(Math.max(0, res.start - ANN_CONTEXT), res.start) : row.prefix;
+      const suffix = res ? flat.text.slice(res.end, res.end + ANN_CONTEXT) : row.suffix;
+      const want = { prefix, suffix,
+        start: res ? res.start : row.start,
+        end: res ? res.end : row.end,
+        state: res ? "active" : "orphan" };
+      if(want.prefix !== row.prefix || want.suffix !== row.suffix
+         || want.start !== row.start || want.end !== row.end || want.state !== row.state){
+        dbCall("annotation_refresh_anchor", {
+          annotation_id: row.id, prefix: want.prefix, suffix: want.suffix,
+          start: want.start, end: want.end, state: want.state,
+        }).catch(e => showErr(t, "Could not re-anchor an annotation: " + (e.message || e)));
+        row.prefix = want.prefix; row.suffix = want.suffix;
+        row.start = want.start; row.end = want.end; row.state = want.state;
+      }
+    }
+  }
+  annRebuildPaint();
+  annUpdateBadge();
+  annRenderPanelList();
+}
+function annUpdateBadge(){
+  const b = $("#annCount");
+  if(!b) return;
+  const t = cur();
+  const n = t ? annStateOf(t.id).rows.length : 0;
+  b.textContent = n > 0 ? String(n) : "";
+  const toggle = $("#annToggle");
+  if(toggle){
+    toggle.setAttribute("aria-pressed", $("#annPanel") && !$("#annPanel").hidden ? "true" : "false");
+    toggle.title = n > 0
+      ? "Highlights and notes (" + n + ") — Ctrl+Shift+A"
+      : "Highlights and notes (Ctrl+Shift+A)";
+  }
+}
+function annRenderPanelList(){
+  const panel = $("#annPanel");
+  if(!panel || panel.hidden) return;
+  const sub = $("#annSubtitle"), list = $("#annList");
+  const t = cur();
+  if(!t){
+    sub.textContent = "";
+    list.innerHTML = '<div class="ann-empty">Open a document to annotate it.</div>';
+    return;
+  }
+  sub.textContent = t.name || "This document";
+  const state = annStateOf(t.id);
+  if(!useIpc()){
+    list.innerHTML = '<div class="ann-empty">Annotations are stored in the mdview app.</div>';
+    return;
+  }
+  if(t.savedId == null){
+    list.innerHTML = '<div class="ann-empty">No highlights yet.<br><br>Select any passage and choose Save highlight — the document is stored automatically so its highlights have a stable home.</div>';
+    return;
+  }
+  if(!state.rows.length){
+    list.innerHTML = '<div class="ann-empty">No highlights yet.<br><br>Select text to highlight it, or add a note for context.</div>';
+    return;
+  }
+  list.innerHTML = "";
+  for(const row of state.rows){
+    const item = document.createElement("div");
+    item.className = "ann-item";
+    item.tabIndex = 0;
+    item.setAttribute("role", "button");
+    item.setAttribute("aria-label", (row.note ? "Highlight with note: " : "Highlight: ") + String(row.exact || "").slice(0, 80));
+    const q = document.createElement("div"); q.className = "ann-quote"; q.textContent = row.exact;
+    item.appendChild(q);
+    if(row.note){
+      const n = document.createElement("div"); n.className = "ann-note"; n.textContent = row.note;
+      item.appendChild(n);
+    }
+    const meta = document.createElement("div"); meta.className = "ann-meta";
+    const dot = document.createElement("span"); dot.className = "ann-dot";
+    dot.style.background = ANN_HEX[row.color] || ANN_HEX.yellow;
+    meta.appendChild(dot);
+    const label = document.createElement("span");
+    label.textContent = row.note ? "Highlight · Note" : "Highlight";
+    meta.appendChild(label);
+    if(row.state === "orphan"){
+      const chip = document.createElement("span"); chip.className = "ann-orphan"; chip.textContent = "needs review";
+      meta.appendChild(chip);
+    }
+    item.appendChild(meta);
+    const open = () => {
+      const res = state.resolved.get(row.id);
+      if(res && state.flat){
+        const range = annRangeFromOffsets(state.flat, res.start, res.end);
+        const host = range && range.startContainer.parentElement;
+        if(host && host.scrollIntoView) host.scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+      annOpenEditor(t, row, annRectNearPoint(window.innerWidth / 2, 120));
+    };
+    item.onclick = open;
+    item.onkeydown = e => { if(e.key === "Enter" || e.key === " "){ e.preventDefault(); open(); } };
+    list.appendChild(item);
+  }
+}
+function annRectNearPoint(x, y){ return { left: x, top: y, bottom: y + 1, right: x }; }
+function annTogglePanel(force){
+  const panel = $("#annPanel");
+  if(!panel) return;
+  const show = force === undefined ? panel.hidden : !!force;
+  panel.hidden = !show;
+  if(show) annRenderPanelList();
+  annUpdateBadge();
+}
+function annOpenEditor(t, target, rect){
+  const editor = $("#annEditor");
+  if(!editor) return;
+  const isNew = !target || target.id == null;
+  const color = isNew ? annSelectedColor
+    : (ANN_COLORS.includes(target.color) ? target.color : "yellow");
+  annEditorState = { tabId: t.id, anchor: isNew ? target : null, row: isNew ? null : target, color, armTimer: null };
+  editor.innerHTML = "";
+  const quote = document.createElement("div");
+  quote.className = "ann-editor-quote";
+  quote.textContent = String(target && target.exact || "");
+  editor.appendChild(quote);
+  const colors = document.createElement("div");
+  colors.className = "ann-colors";
+  colors.setAttribute("role", "radiogroup");
+  colors.setAttribute("aria-label", "Highlight color");
+  for(const c of ANN_COLORS){
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "ann-color";
+    b.style.background = ANN_HEX[c];
+    b.title = c;
+    b.setAttribute("role", "radio");
+    b.setAttribute("aria-checked", c === color ? "true" : "false");
+    b.onclick = () => {
+      annEditorState.color = c;
+      annSelectedColor = c;
+      colors.querySelectorAll(".ann-color").forEach(x => {
+        x.setAttribute("aria-checked", x.title === c ? "true" : "false");
+      });
+    };
+    colors.appendChild(b);
+  }
+  editor.appendChild(colors);
+  const input = document.createElement("textarea");
+  input.className = "ann-textarea";
+  input.placeholder = "Add a note (optional)…";
+  input.setAttribute("aria-label", "Annotation note");
+  input.value = isNew ? "" : String(target.note || "");
+  editor.appendChild(input);
+  const actions = document.createElement("div");
+  actions.className = "ann-editor-actions";
+  const cancel = document.createElement("button");
+  cancel.type = "button"; cancel.className = "btn"; cancel.textContent = "Cancel";
+  cancel.onclick = () => annCloseEditor();
+  actions.appendChild(cancel);
+  if(!isNew){
+    const del = document.createElement("button");
+    del.type = "button"; del.className = "btn danger"; del.textContent = "Delete";
+    // Two-click confirm, same arm/confirm/3s-disarm pattern as the saved list.
+    del.onclick = () => {
+      if(del.dataset.armed === "1"){ void annDeleteEditorRow(); return; }
+      del.dataset.armed = "1";
+      del.classList.add("armed");
+      del.textContent = "Delete?";
+      clearTimeout(annEditorState.armTimer);
+      annEditorState.armTimer = setTimeout(() => {
+        if(annEditorState){ annEditorState.armTimer = null; }
+        del.dataset.armed = "0"; del.classList.remove("armed"); del.textContent = "Delete";
+      }, 3000);
+    };
+    actions.appendChild(del);
+  }
+  const save = document.createElement("button");
+  save.type = "button"; save.className = "btn primary";
+  save.textContent = isNew ? "Save highlight" : "Save changes";
+  save.onclick = () => { void annSaveEditor(input.value.trim()); };
+  actions.appendChild(save);
+  editor.appendChild(actions);
+  editor.hidden = false;
+  const w = Math.min(330, window.innerWidth - 20);
+  editor.style.left = Math.max(10, Math.min(window.innerWidth - w - 10, (rect && rect.left) || 40)) + "px";
+  editor.style.top = Math.max(8, Math.min(window.innerHeight - 260, ((rect && rect.bottom) || 100) + 8)) + "px";
+  input.focus({ preventScroll: true });
+}
+function annCloseEditor(){
+  const editor = $("#annEditor");
+  if(annEditorState && annEditorState.armTimer) clearTimeout(annEditorState.armTimer);
+  annEditorState = null;
+  if(editor) editor.hidden = true;
+  try{ window.getSelection().removeAllRanges(); }catch(_){}
+}
+async function annSaveEditor(note){
+  const es = annEditorState;
+  if(!es) return;
+  const t = tabs.find(x => x.id === es.tabId);
+  if(!t){ annCloseEditor(); return; }
+  if(!useIpc()){ showErr(t, "Annotations are stored in the mdview app."); return; }
+  if(es.row){
+    try{
+      const ok = await dbCall("annotation_update", { annotation_id: es.row.id, color: es.color, note });
+      if(ok !== true) throw new Error("the annotation no longer exists");
+      annCloseEditor();
+      mdvAnnotationsRefresh(t.id); // single source of truth: re-list, re-paint
+    }catch(e){
+      showErr(t, "Could not save the annotation: " + (e.message || e));
+    }
+    return;
+  }
+  // New annotation: never store one without an identity — auto-save first.
+  if(t.savedId == null){
+    await window.mdviewAutoSaveDocument(t);
+  }
+  if(t.savedId == null){
+    showErr(t, "Could not save the document, so the highlight was not stored.");
+    return;
+  }
+  try{
+    const a = await dbCall("annotation_add", {
+      doc_id: t.savedId, exact: es.anchor.exact, prefix: es.anchor.prefix,
+      suffix: es.anchor.suffix, start: es.anchor.start, end: es.anchor.end,
+      color: es.color, note,
+    });
+    if(!a || typeof a !== "object" || a.id == null) throw new Error("bad response");
+    annCloseEditor();
+    mdvAnnotationsRefresh(t.id);
+  }catch(e){
+    showErr(t, "Could not save the highlight: " + (e.message || e));
+  }
+}
+async function annDeleteEditorRow(){
+  const es = annEditorState;
+  if(!es || !es.row) return;
+  const t = tabs.find(x => x.id === es.tabId);
+  try{
+    const ok = await dbCall("annotation_delete", { annotation_id: es.row.id });
+    if(ok !== true) throw new Error("the annotation no longer exists");
+    annCloseEditor();
+    if(t) mdvAnnotationsRefresh(t.id);
+  }catch(e){
+    if(t) showErr(t, "Could not delete the annotation: " + (e.message || e));
+  }
+}
+// Caret position -> flat offset, used for click-to-edit on painted highlights.
+function annHitAt(t, x, y){
+  const state = annState.get(t.id);
+  if(!state || !state.flat || !state.resolved.size) return null;
+  const view = document.getElementById("view-" + t.id);
+  const root = view ? view.querySelector(".markdown-body") : null;
+  if(!root) return null;
+  let range = null;
+  try{
+    if(document.caretRangeFromPoint) range = document.caretRangeFromPoint(x, y);
+    else if(document.caretPositionFromPoint){
+      const p = document.caretPositionFromPoint(x, y);
+      if(p){ range = document.createRange(); range.setStart(p.offsetNode, p.offset); }
+    }
+  }catch(_){ return null; }
+  if(!range || !root.contains(range.startContainer)) return null;
+  const off = annFlatOffset(state.flat, root, range.startContainer, range.startOffset);
+  if(off == null) return null;
+  for(const row of state.rows){
+    const res = state.resolved.get(row.id);
+    if(res && off >= res.start && off <= res.end) return { row, res };
+  }
+  return null;
+}
+// Hooks used elsewhere in the app (function declarations hoist, so call order
+// in the source does not matter).
+function mdvAnnotationsInvalidateDoc(docId){
+  for(const [tabId, state] of annState){
+    if(state.rows.some(r => r.document_id === docId)) annState.delete(tabId);
+  }
+  annRebuildPaint();
+  annUpdateBadge();
+  annRenderPanelList();
+}
+function annWireEvents(){
+  $("#annToggle").addEventListener("click", () => annTogglePanel());
+  $("#annClose").addEventListener("click", () => annTogglePanel(false));
+  document.addEventListener("pointerup", e => {
+    if(e.button !== 0) return;
+    if(e.target.closest && e.target.closest("#annPanel, #annEditor, #bar")) return;
+    if(!useIpc()) return;
+    const t = cur();
+    if(!t || !t.rendered) return;
+    const view = document.getElementById("view-" + t.id);
+    if(!view || !view.classList.contains("active")) return;
+    const root = view.querySelector(".markdown-body");
+    if(!root) return;
+    setTimeout(() => {
+      const sel = window.getSelection();
+      const anchor = annAnchorFromSelection(root, sel);
+      if(!anchor) return;
+      const rect = sel.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null;
+      annOpenEditor(t, anchor, rect);
+    }, 70);
+  });
+  document.addEventListener("click", e => {
+    const editor = $("#annEditor");
+    const inEditor = editor && !editor.hidden && editor.contains(e.target);
+    const inPanel = e.target.closest && e.target.closest("#annPanel");
+    if(inEditor || inPanel) return;
+    const t = cur();
+    const hit = t ? annHitAt(t, e.clientX, e.clientY) : null;
+    if(hit){
+      annOpenEditor(t, hit.row, annRectNearPoint(e.clientX, e.clientY));
+      return;
+    }
+    if(editor && !editor.hidden) annCloseEditor();
+  });
+  document.addEventListener("keydown", e => {
+    if(e.key === "Escape"){
+      const editor = $("#annEditor");
+      if(editor && !editor.hidden){ e.preventDefault(); annCloseEditor(); }
+      return;
+    }
+    const mod = e.ctrlKey || e.metaKey;
+    if(mod && e.shiftKey && (e.key === "A" || e.key === "a")){
+      e.preventDefault();
+      annTogglePanel();
+    }
+  });
+  window.addEventListener("resize", () => {
+    const editor = $("#annEditor");
+    if(editor && !editor.hidden) annCloseEditor();
+  });
+  window.addEventListener("scroll", () => {
+    const editor = $("#annEditor");
+    if(editor && !editor.hidden) annCloseEditor();
+  }, true);
 }
 
 /* ---------- errors ---------- */
@@ -1143,7 +1746,10 @@ async function renderTab(t){
   }catch(e){ html = fallbackRender(t.md); }
   page.innerHTML = '<article class="markdown-body">'+html+'</article>';
   t.rendered = true; t.dirty = false;
-  enhance(page, t.md);
+  // Annotations resolve against the *enhanced* DOM (KaTeX/mermaid mutate it).
+  enhance(page, t.md)
+    .catch(e => console.warn("mdview: enhancement failed", e))
+    .finally(() => { mdvAnnotationsRefresh(t.id); });
   buildToc(); // headings are in the DOM already; costs one query pass
 }
 
@@ -1522,6 +2128,7 @@ window.addEventListener("wheel", e=>{
 
 /* ---------- boot ---------- */
 loadPrefs(); applyPrefs(); applyTheme(false);
+annWireEvents();
 // WebView2 handles F11 itself (native element fullscreen) which fights our
 // Rust-driven borderless fullscreen and desyncs the toggle. Never let the
 // native one stick: Rust owns fullscreen, full stop.

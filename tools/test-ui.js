@@ -23,6 +23,8 @@ const FIXTURE_HTML = "<h1>UI test doc</h1><p>alpha bravo charlie</p>";
 const shim =
   "var __store = [];\n" +
   "var __nextId = 1;\n" +
+  "var __annotations = [];\n" +
+  "var __annNextId = 1;\n" +
   "function __now() { return Math.floor(Date.now() / 1000); }\n" +
   "window.__UI_TEST_SENT__ = [];\n" +
   "window.ipc = { postMessage: function (raw) {\n" +
@@ -73,7 +75,43 @@ const shim =
   "  }\n" +
   "  else if (m.cmd === 'delete_document') {\n" +
   "    var i = __store.findIndex(function (x) { return x.id === m.doc_id; });\n" +
-  "    if (i >= 0) { __store.splice(i, 1); reply(true, 'true'); } else reply(true, 'false');\n" +
+  "    if (i >= 0) {\n" +
+  "      __store.splice(i, 1);\n" +
+  "      for (var j = __annotations.length - 1; j >= 0; j--) { if (__annotations[j].document_id === m.doc_id) __annotations.splice(j, 1); }\n" +
+  "      reply(true, 'true');\n" +
+  "    } else reply(true, 'false');\n" +
+  "  }\n" +
+  "  else if (m.cmd === 'annotation_add') {\n" +
+  "    var doc = __store.find(function (d) { return d.id === m.doc_id; });\n" +
+  "    if (!doc) { reply(false, 'document not found'); return; }\n" +
+  "    if (!String(m.exact || '').trim()) { reply(false, 'annotation has no selected text'); return; }\n" +
+  "    if (!(m.start >= 0) || !(m.end > m.start)) { reply(false, 'annotation offsets are out of range'); return; }\n" +
+  "    if (['yellow', 'green', 'blue', 'pink', 'purple'].indexOf(String(m.color || '')) < 0) { reply(false, 'unsupported annotation color'); return; }\n" +
+  "    var a = { id: __annNextId++, document_id: m.doc_id, exact: m.exact, prefix: m.prefix || '', suffix: m.suffix || '',\n" +
+  "              start: m.start, end: m.end, color: m.color, note: m.note || '', state: 'active', created_at: __now(), updated_at: __now() };\n" +
+  "    __annotations.push(a);\n" +
+  "    reply(true, JSON.stringify(a));\n" +
+  "  }\n" +
+  "  else if (m.cmd === 'annotation_list') {\n" +
+  "    reply(true, JSON.stringify(__annotations.filter(function (a) { return a.document_id === m.doc_id; })\n" +
+  "      .sort(function (a, b) { return a.start - b.start || a.id - b.id; })));\n" +
+  "  }\n" +
+  "  else if (m.cmd === 'annotation_update') {\n" +
+  "    var u1 = __annotations.find(function (a) { return a.id === m.annotation_id; });\n" +
+  "    if (!u1) { reply(true, 'false'); return; }\n" +
+  "    u1.color = m.color; u1.note = m.note || ''; u1.updated_at = __now();\n" +
+  "    reply(true, 'true');\n" +
+  "  }\n" +
+  "  else if (m.cmd === 'annotation_refresh_anchor') {\n" +
+  "    var u2 = __annotations.find(function (a) { return a.id === m.annotation_id; });\n" +
+  "    if (!u2) { reply(true, 'false'); return; }\n" +
+  "    var changed = u2.prefix !== m.prefix || u2.suffix !== m.suffix || u2.start !== m.start || u2.end !== m.end || u2.state !== m.state;\n" +
+  "    if (changed) { u2.prefix = m.prefix; u2.suffix = m.suffix; u2.start = m.start; u2.end = m.end; u2.state = m.state; u2.updated_at = __now(); }\n" +
+  "    reply(true, changed ? 'true' : 'false');\n" +
+  "  }\n" +
+  "  else if (m.cmd === 'annotation_delete') {\n" +
+  "    var k = __annotations.findIndex(function (a) { return a.id === m.annotation_id; });\n" +
+  "    if (k >= 0) { __annotations.splice(k, 1); reply(true, 'true'); } else reply(true, 'false');\n" +
   "  }\n" +
   "  else if (m.cmd === 'find_similar') {\n" +
   "    if (String(m.text || '').indexOf('sim-target-marker') >= 0 && __store.length) {\n" +
@@ -210,6 +248,67 @@ async function main() {
     report("similarity banner appears", await waitFor(send, "!!document.querySelector('.similar')", 8000));
     const banner = await evalValue(send, "document.querySelector('.similar') ? document.querySelector('.similar').textContent : ''");
     report("banner names the saved document", banner.indexOf("Renamed doc") >= 0, "banner: " + banner);
+
+    // 7b. Annotate the unsaved tab. Highlighting must auto-save the document
+    //     first (identity before ink), and the annotation must reference it.
+    report("selection opens the highlight editor", await (async () => {
+      await evalValue(send, `(() => {
+        const p = document.querySelector('.view.active .markdown-body p');
+        const tn = p && p.firstChild;
+        if (!tn) return false;
+        const r = document.createRange();
+        r.selectNodeContents(tn);
+        const s = window.getSelection();
+        s.removeAllRanges();
+        s.addRange(r);
+        document.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true, clientX: 40, clientY: 40 }));
+        return true;
+      })()`);
+      return waitFor(send, "!document.querySelector('#annEditor').hidden", 5000);
+    })());
+    await evalValue(send, "(() => { const b = Array.from(document.querySelectorAll('#annEditor .btn.primary')).find(function (x) { return x.textContent === 'Save highlight'; }); if (b) b.click(); return true; })()");
+    report("annotation auto-saves the unsaved document first", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document'; })", 8000));
+    report("annotation_add fires with a verbatim quote and sane offsets", await waitFor(send, `(() => {
+      const adds = window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_add'; });
+      if (!adds.length) return false;
+      const a = adds[adds.length - 1];
+      return a.exact === 'alpha bravo charlie' && a.start >= 0 && a.end > a.start &&
+             typeof a.prefix === 'string' && typeof a.suffix === 'string';
+    })()`, 8000));
+    const annAdd = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_add'; }).pop()");
+    const autoSave = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'auto_save_document'; }).pop()");
+    report("annotation_add targets the document auto-saved moments earlier",
+      !!annAdd && !!autoSave, "add: " + JSON.stringify(annAdd) + " autosave: " + JSON.stringify(autoSave));
+    report("saving the highlight closes the editor", await waitFor(send,
+      "!!document.querySelector('#annEditor').hidden", 5000));
+    // Panel shows it; badge counts it.
+    await evalValue(send, "document.querySelector('#annToggle').click()");
+    report("panel lists the highlight", await waitFor(send,
+      "!!document.querySelector('.ann-item') && document.querySelector('.ann-item').textContent.indexOf('alpha bravo charlie') >= 0", 5000));
+    report("badge counts the highlight", (await evalValue(send, "document.querySelector('#annCount').textContent")) === "1");
+    // Edit the note through the editor.
+    await evalValue(send, "document.querySelector('.ann-item').click()");
+    report("clicking a highlight opens its editor", await waitFor(send,
+      "!!document.querySelector('#annEditor .ann-editor-quote')", 5000));
+    await evalValue(send, "(() => { const ta = document.querySelector('#annEditor .ann-textarea'); ta.value = 'reviewed'; return true; })()");
+    await evalValue(send, "(() => { const b = Array.from(document.querySelectorAll('#annEditor .btn.primary')).find(function (x) { return x.textContent === 'Save changes'; }); if (b) b.click(); return true; })()");
+    report("note edit goes through annotation_update", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'annotation_update' && m.note === 'reviewed'; })", 5000));
+    // Delete it via the same two-click confirm pattern.
+    await evalValue(send, "document.querySelector('.ann-item').click()");
+    report("editor reopens with the delete button", await waitFor(send,
+      "!!document.querySelector('#annEditor .btn.danger')", 5000));
+    await evalValue(send, "(() => { document.querySelector('#annEditor .btn.danger').click(); return true; })()");
+    report("first click arms the delete confirm",
+      (await evalValue(send, "(document.querySelector('#annEditor .btn.danger') || {}).textContent")) === "Delete?");
+    await evalValue(send, "(() => { document.querySelector('#annEditor .btn.danger').click(); return true; })()");
+    report("confirming fires annotation_delete", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'annotation_delete'; })", 5000));
+    report("badge clears once the last highlight is gone", await waitFor(send,
+      "document.querySelector('#annCount').textContent === ''", 5000));
+    await evalValue(send, "document.querySelector('#annToggle').click()"); // panel closed for the rest of the flow
+
     await evalValue(send, "(() => { const b = Array.from(document.querySelectorAll('.similar .btn')).find(function (x) { return x.textContent === 'Open saved'; }); if (b) b.click(); return true; })()");
     report("clicking Open saved swaps in the saved document", await waitFor(send,
       "document.querySelector('.view.active .markdown-body') && document.querySelector('.view.active .markdown-body').textContent.indexOf('alpha bravo') >= 0", 8000));
@@ -236,6 +335,38 @@ async function main() {
       (await evalValue(send, "document.querySelectorAll('.tab').length")) === 1 &&
       (await evalValue(send, "!!document.querySelector('.drop')")) === true);
 
+    // 10. Anchor resolver: the edge cases that decide whether an annotation
+    //     survives an edit — or is honestly marked needs review.
+    const resolveCase = async (name, text, anchor, expected) => {
+      const got = await evalValue(send,
+        "window.mdviewAnnotationsResolve(" + JSON.stringify(text) + ", " + JSON.stringify(anchor) + ")");
+      report(name, JSON.stringify(got) === JSON.stringify(expected), "got: " + JSON.stringify(got));
+    };
+    await resolveCase("resolver: unchanged position verifies", "hello brave world",
+      { exact: "brave", prefix: "hello ", suffix: " world", start: 6, end: 11 }, { start: 6, end: 11 });
+    report("resolver: inserted text before the quote re-anchors by content", await evalValue(send, `(() => {
+      const t = "INSERTED\\nhello brave world";
+      const s = t.indexOf("brave");
+      const r = window.mdviewAnnotationsResolve(t, { exact: "brave", prefix: "hello ", suffix: " world", start: 6, end: 11 });
+      return !!r && r.start === s && r.end === s + 5;
+    })()`));
+    await resolveCase("resolver: deleted passage orphans instead of guessing", "hello world",
+      { exact: "brave", prefix: "hello ", suffix: " world", start: 6, end: 11 }, null);
+    await resolveCase("resolver: duplicated passage with distinguishing context resolves to the right one", "aa BB cc BB dd",
+      { exact: "BB", prefix: "aa BB cc ", suffix: " dd", start: 0, end: 2 }, { start: 9, end: 11 });
+    await resolveCase("resolver: stale duplicate with identical context refuses to guess", "x BB y x BB y",
+      { exact: "BB", prefix: "x ", suffix: " y", start: 5, end: 7 }, null);
+    await resolveCase("resolver: unique quote re-anchors even with zero context match", "preface brave epilogue",
+      { exact: "brave", prefix: "zzz", suffix: "zzz", start: 3, end: 8 }, { start: 8, end: 13 });
+    await resolveCase("resolver: emoji offsets stay consistent", "a\u{1F600}b",
+      { exact: "\u{1F600}b", prefix: "a", suffix: "", start: 1, end: 4 }, { start: 1, end: 4 });
+    await resolveCase("resolver: quote at the very start of the document", "first line",
+      { exact: "first", prefix: "", suffix: " line", start: 0, end: 5 }, { start: 0, end: 5 });
+    await resolveCase("resolver: quote at the very end of the document", "one two three",
+      { exact: "three", prefix: "two ", suffix: "", start: 8, end: 13 }, { start: 8, end: 13 });
+    await resolveCase("resolver: empty selection is unusable", "abc",
+      { exact: "   ", prefix: "", suffix: "", start: 0, end: 3 }, null);
+
     // 9. Bridge contract: every request id is the bridge's own string — the
     //    exact regression that hung every DB call.
     const ids = await evalValue(send, "window.__UI_TEST_SENT__.map(function (m) { return m.id; })");
@@ -243,14 +374,30 @@ async function main() {
       Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === "string" && /^r\d+$/.test(id)),
       JSON.stringify(ids));
 
-    // 10. Delete a saved document from the home screen, from the row itself.
+    // 10. Delete a saved document from the home screen. The annotation flow
+    //     auto-saved a second document earlier in this suite, so the list now
+    //     holds two rows — target the "Renamed doc" row by title.
+    const clickRowDelete = `(() => {
+      const rows = Array.from(document.querySelectorAll('.saved-item'));
+      const row = rows.find(r => r.querySelector('.saved-title') && r.querySelector('.saved-title').textContent === 'Renamed doc');
+      const x = row && row.querySelector('.saved-x');
+      if (x) x.click();
+      return true;
+    })()`;
     report("home lists the saved document with a delete button", await waitFor(send,
-      "!!document.querySelector('.saved-item .saved-x')", 5000));
-    await evalValue(send, "(() => { document.querySelector('.saved-item .saved-x').click(); return true; })()");
-    report("first click arms the confirm", (await evalValue(send, "(document.querySelector('.saved-item .saved-x') || {}).textContent")) === "Delete?");
-    await evalValue(send, "(() => { document.querySelector('.saved-item .saved-x').click(); return true; })()");
+      "document.querySelectorAll('.saved-item .saved-x').length >= 2", 5000));
+    await evalValue(send, clickRowDelete);
+    report("first click arms the confirm", await evalValue(send, `(() => {
+      const rows = Array.from(document.querySelectorAll('.saved-item'));
+      const row = rows.find(r => r.querySelector('.saved-title') && r.querySelector('.saved-title').textContent === 'Renamed doc');
+      const x = row && row.querySelector('.saved-x');
+      return x && x.textContent;
+    })()`) === "Delete?");
+    await evalValue(send, clickRowDelete);
     report("second click deletes the row", await waitFor(send,
-      "!document.querySelector('.saved-item') && !!document.querySelector('.saved-empty')", 5000));
+      "!Array.from(document.querySelectorAll('.saved-title')).some(function (e) { return e.textContent === 'Renamed doc'; })", 5000));
+    report("the other saved document is untouched",
+      (await evalValue(send, "document.querySelectorAll('.saved-item').length")) === 1);
     const sentDelete = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'delete_document'; })");
     report("delete_document targets the saved row",
       Array.isArray(sentDelete) && sentDelete.length === 1 && sentDelete[0].doc_id === 1,
