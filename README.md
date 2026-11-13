@@ -25,6 +25,7 @@ unplugged.
 - [Reading comfortably](#reading-comfortably)
   - [The contents pill](#the-contents-pill)
   - [Theme, width and text size](#theme-width-and-text-size)
+- [Saved documents](#saved-documents)
 - [Printing and PDF](#printing-and-pdf)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Command line](#command-line)
@@ -219,6 +220,37 @@ Or go wide and large for a big display:
 
 ---
 
+## Saved documents
+
+The **💾** button (or <kbd>Ctrl</kbd>+<kbd>S</kbd>) stores the current document
+in mdview's internal SQLite database at `%APPDATA%\mdview\documents.db`.
+Nothing is saved to the database until you ask — opening, reading or pasting a
+document never writes to it.
+
+- **Compressed storage** — the markdown is DEFLATE-compressed (the same codec
+  the renderer uses), together with its size and a fast content hash. The
+  blob is the canonical copy; the search index is derived, never a second
+  canonical text.
+- **Double-click a tab to rename** the document; the window title follows, and
+  a rename of a saved document is written to the store.
+- **Search the welcome screen** — every empty tab lists your recent saved
+  documents and a search box. One query searches title *and* content through an
+  FTS5 trigram index: prefixes, substrings and most near misses match, and
+  title hits rank first. <kbd>Enter</kbd> opens the first result.
+- **Same document, noticed** — when any markdown is opened, mdview checks the
+  store and, if it looks like something you saved, offers to open the saved
+  version instead. The offer is a quiet banner with **Open saved** /
+  **Dismiss** — never a forced swap, and nothing is merged automatically.
+  Identical content is recognised silently as "already saved"; heavily edited
+  texts are matched with a SimHash signature (plus an exact-hash fast path).
+- **Ready for annotations** — the store carries a reserved `annotations`
+  table and an auto-save hook, so the upcoming highlight/annotation feature
+  can attach its data to a stable document identity instead of guessing.
+- **Nothing is lost** — a save is a single transaction; deleting the database
+  file simply clears the library, and mdview recreates it empty.
+
+---
+
 ## Printing and PDF
 
 <kbd>Ctrl</kbd>+<kbd>P</kbd> is deliberately **not** intercepted — you get the
@@ -263,6 +295,7 @@ tray tooltip always shows the combination that was actually claimed.
 | Keys | Action |
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste — text, a file, a path or a URL |
+| <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save the document into the internal store |
 | <kbd>Ctrl</kbd>+<kbd>T</kbd> | New tab |
 | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close tab |
 | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> | Zoom in / out |
@@ -370,7 +403,7 @@ this is **Windows-only as written**.
 ```powershell
 cargo run                                          # debug
 cargo build --release                              # -> target\release\mdview.exe
-cargo test --release                               # 20 tests + 1 doc-fixture test
+cargo test --release                               # 44 tests + 1 doc-fixture test
 ```
 
 The project has no build script and no code generation. Vendored renderer assets
@@ -399,6 +432,7 @@ python tools/vendor-assets.py
   render · read_file           KaTeX · Mermaid · hljs
   fetch_url · pick_file        local media (allowlisted)
   clipboard_files · prefs
+  documents → SQLite store     compressed · FTS5 search · SimHash
      │
      ▼
   tab renders → enhance() → highlight → mermaid → katex → TOC
@@ -419,6 +453,12 @@ Two implementation notes worth knowing if you read the source:
   profile. An opaque origin cannot persist `localStorage`; the page mirrors to
   `localStorage` in a `try`/`catch` for the plain-file case, but the Rust file is
   the real store.
+- **Saved documents live in `%APPDATA%\mdview\documents.db`** (SQLite, WAL mode).
+  Content blobs are DEFLATE-compressed and byte-verified on read; the search
+  index (FTS5, trigram tokenizer) is derived and rebuilt on every save, and a
+  64-bit SimHash per document drives the "same document, offered" check when a
+  markdown is opened. A SimHash only *suggests* a match — the user always
+  decides.
 
 ---
 
@@ -427,6 +467,8 @@ Two implementation notes worth knowing if you read the source:
 | Limit | Value |
 |---|---|
 | Markdown per paste / file / render | 4 MB |
+| Saved documents (each) | 4 MB, same cap as a paste |
+| Saved documents per search query | 50, ranked |
 | URL fetch | 3 MB |
 | Media served from disk | 100 MB |
 | Documents per drop / pick / paste | 8 |
@@ -465,6 +507,9 @@ Honest list, so nobody has to rediscover these:
   limits the blast radius, but this is not a hardened HTML sanitiser.
 - **Task-list checkboxes are display-only**, so pasted documents stay
   byte-identical to their source.
+- **The `annotations` table is reserved, not wired up.** It exists only so the
+  highlight/annotation feature has a stable document identity from day one;
+  there is no annotation UI yet, and the table stays empty until that lands.
 
 ---
 
@@ -476,13 +521,16 @@ frontend/vendor/           KaTeX, Mermaid, highlight.js — committed gzipped
 src/main.rs                window, WebView2, renderer, protocol handler, CLI
 src/bin/mdview-tray.rs     the tray helper that owns the global hotkey
 src/appicon.rs             procedurally drawn app + tray icons (no asset files)
+src/db.rs                  internal document database (SQLite, FTS5, SimHash)
 tools/                     asset and doc tooling
 docs/demo/field-notes.md   the document every screenshot is taken from
 docs/screenshots/          generated screenshots
 ```
 
-There are 20 unit tests covering the renderer, table wrapping, media URL
-resolution, vendored-asset inflation, preferences and the local-media gate.
+There are 44 unit tests covering the renderer, table wrapping, media URL
+resolution, vendored-asset inflation, preferences, the local-media gate and the
+document database (schema migration, compression round-trips, FTS search,
+ranking, fuzzy matching, auto-save idempotency and cross-source identity).
 
 ### Regenerating the screenshots
 

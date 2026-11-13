@@ -24,7 +24,7 @@ dark = scopeCss(dark, "html.dark");
 html = html.split("__MDVIEW_HLJS_LIGHT_CSS__").join(light);
 html = html.split("__MDVIEW_HLJS_DARK_CSS__").join(dark);
 html = html.split("__MDVIEW_HLJS_JS__").join(js.split("</script").join("<\\/script"));
-html = html.split("__MDVIEW_INITIAL_JSON__").join('{"name":"","text":"","base":""}');
+html = html.split("__MDVIEW_INITIAL_JSON__").join('{"name":"","text":"","base":"","source":""}');
 html = html.split("__MDVIEW_PREFS_JSON__").join('{"theme":null,"fontScale":1.0,"readWidth":860}');
 fs.writeFileSync(root + "\\preview-theme.html", html);
 console.log("preview bytes:", html.length);

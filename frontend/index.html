@@ -213,6 +213,45 @@
   .hint{ margin-top:16px; font-size:12px; color:var(--quote); }
   .err{ max-width:var(--read-width); margin:0 auto 14px; padding:11px 16px; border:1px solid #c1544a; border-radius:10px;
     background:rgba(193,84,74,.08); font-size:13px; font-family:var(--sans); display:none; }
+  /* Save button: quiet until it has something to say. */
+  #save.saved{ color:var(--accent); }
+  #save.flash{ animation:mdv-save-flash .6s ease; }
+  @keyframes mdv-save-flash{ 0%{ background:var(--accent-soft); border-color:var(--accent); }
+    100%{ background:transparent; border-color:transparent; } }
+  @media (prefers-reduced-motion: reduce){ #save.flash{ animation:none; } }
+  /* Tab rename: the input inherits the tab's type and sits exactly where the
+     title was, so renaming never shifts the tab strip. */
+  .tab-input{ font:inherit; font-size:12.5px; color:inherit; background:transparent;
+    border:0; border-bottom:1px solid var(--accent); padding:0; margin:0;
+    width:120px; max-width:160px; outline:none; }
+  /* "This looks like a saved document" banner. A whisper, not a modal. */
+  .similar{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    margin:0 0 18px; padding:11px 14px; border:1px solid var(--border);
+    border-radius:10px; background:var(--card); box-shadow:var(--shadow);
+    font:13px/1.45 var(--sans); }
+  .similar>span{ flex:1; min-width:200px; color:var(--quote); }
+  .similar b{ color:var(--fg); font-weight:600; }
+  .similar .btn{ padding:6px 12px; font-size:12.5px; }
+  /* Saved documents on the welcome screen. */
+  .saved{ margin-top:26px; padding-top:22px; border-top:1px solid var(--border); text-align:left; }
+  .saved-head{ display:flex; align-items:center; justify-content:space-between; gap:12px;
+    flex-wrap:wrap; margin-bottom:12px; }
+  .saved-head h2{ font-family:var(--serif); font-size:16px; font-weight:600; margin:0; }
+  .saved-search{ flex:1; min-width:200px; max-width:340px; padding:7px 11px;
+    border:1px solid var(--border); border-radius:9px; background:var(--bg);
+    color:var(--fg); font:13px var(--sans); outline-offset:2px; }
+  .saved-search:focus{ outline:2px solid var(--accent); border-color:var(--accent); }
+  .saved-list{ display:flex; flex-direction:column; gap:6px; max-height:260px; overflow-y:auto; }
+  .saved-item{ display:flex; flex-direction:column; gap:3px; width:100%; text-align:left;
+    border:1px solid var(--border); background:var(--card); border-radius:10px;
+    padding:9px 12px; cursor:pointer; font:inherit; color:inherit;
+    transition:border-color .15s, box-shadow .15s; }
+  .saved-item:hover{ border-color:var(--quote-bar); box-shadow:var(--shadow); }
+  .saved-title{ font:600 13px/1.3 var(--sans); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .saved-meta{ font:11px var(--sans); color:var(--quote); }
+  .saved-snippet{ font:12px/1.45 var(--serif); color:var(--quote); overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  .saved-empty{ padding:14px 4px; color:var(--quote); font:12.5px/1.5 var(--sans); text-align:center; }
   pre.mermaid{ background:transparent; border:0; box-shadow:none; }
   .mermaid svg{ max-width:100%; height:auto; }
   /* Floating contents pill: quiet by design. It only appears when a doc
@@ -374,6 +413,7 @@
   <button class="ctl" id="zin" title="Zoom in (Ctrl+=)">A+</button>
   <button class="ctl" id="zout" title="Zoom out (Ctrl+-)">A−</button>
   <button class="ctl" id="fs" title="Fullscreen (F11)">⛶</button>
+  <button class="ctl" id="save" title="Save document (Ctrl+S)" aria-pressed="false">💾</button>
   <input id="width" type="range" min="620" max="1180" step="10" value="860" title="Reading width — also [ / ] or Alt+Left/Right">
   <button class="ctl" id="theme" title="Toggle light/dark">◐</button>
 </div>
@@ -464,9 +504,12 @@ function titleOf(md, fallback){
 }
 
 /* ---------- tabs ---------- */
-function newTab(initialMd, initialName, base){
+function newTab(initialMd, initialName, base, source){
   const id = ++seq;
-  const t = { id, md:"", name: initialName||("tab "+id), rendered:false, dirty:false, base:base||"" };
+  const si = sourceInfo(base, source);
+  const t = { id, md:"", name: initialName||("tab "+id), rendered:false, dirty:false,
+    base:base||"", sourceKind:si.kind, sourceRef:si.ref,
+    savedId:null, similarDismissed:false };
   tabs.push(t);
   const v = document.createElement("div");
   v.className = "view"; v.id = "view-"+id;
@@ -476,6 +519,9 @@ function newTab(initialMd, initialName, base){
     + '<div class="row"><button class="btn primary" data-act="paste">Paste now</button>'
     + '<button class="btn" data-act="browse">Browse files…</button></div>'
     + '<p class="hint">or drag &amp; drop files or folders anywhere • <kbd>Ctrl</kbd>+<kbd>T</kbd> new tab • <kbd>Ctrl</kbd>+<kbd>W</kbd> close</p>'
+    + '<div class="saved"><div class="saved-head"><h2>Saved documents</h2>'
+    + '<input class="saved-search" type="search" placeholder="Search title or content…" autocomplete="off" aria-label="Search saved documents"></div>'
+    + '<div class="saved-list"></div></div>'
     + '</div></div></div>';
   viewsEl.appendChild(v);
   v.querySelector('[data-act="browse"]').onclick = ()=> pickFileDialog(t);
@@ -484,8 +530,19 @@ function newTab(initialMd, initialName, base){
     try{ await pasteFromClipboard(t); }
     catch(e){ showErr(t, "Clipboard read blocked — press Ctrl+V inside this window."); }
   };
+  const savedList = v.querySelector(".saved-list");
+  const savedSearch = v.querySelector(".saved-search");
+  let savedTimer = 0;
+  savedSearch.addEventListener("input", ()=>{
+    clearTimeout(savedTimer);
+    savedTimer = setTimeout(()=> loadSavedList(savedList, savedSearch.value), 150);
+  });
+  savedSearch.addEventListener("keydown", e=>{
+    if(e.key === "Enter"){ const first = savedList.querySelector(".saved-item"); if(first) first.click(); }
+  });
+  loadSavedList(savedList, "");
   paintTabs(); switchTab(id);
-  if(typeof initialMd === "string" && initialMd.length) setMarkdown(t, initialMd, initialName);
+  if(typeof initialMd === "string" && initialMd.length) setMarkdown(t, initialMd, initialName, base, source);
   else setTimeout(()=>{ const d=v.querySelector(".drop"); if(d && tabs.find(x=>x.id===id) && !t.rendered) d.focus({preventScroll:true}); },30);
   return t;
 }
@@ -500,6 +557,7 @@ function paintTabs(){
     x.onclick = e=>{ e.stopPropagation(); closeTab(t.id); };
     d.appendChild(x);
     d.onclick = ()=> switchTab(t.id);
+    d.ondblclick = e=>{ e.stopPropagation(); startRenameTab(t, d); };
     tabsEl.appendChild(d);
   }
 }
@@ -510,6 +568,8 @@ function switchTab(id){
   if(t && t.dirty && t.rendered) renderTab(t); // theme changed while hidden
   paintTabs();
   buildToc(); // contents follow the newly visible page
+  updateSaveState();
+  updateWindowTitle();
 }
 function closeTab(id){
   tabs = tabs.filter(t=>t.id!==id);
@@ -534,6 +594,214 @@ function cur(){ return tabs.find(t=>t.id===activeId); }
 window.__mdview_new_tab_remote = function(){ newTab(); try{window.focus();}catch(e){} };
 window.__mdview_open_payload = function(d){ try{ openDocs([d]); }catch(e){} };
 $("#newtab").onclick = ()=> newTab();
+
+/* ---------- internal document database ---------- */
+// The Rust side owns the SQLite store; these helpers are the only JS that
+// touches it. Every call goes through the same `rust()` bridge as the rest of
+// the app, and every result is JSON.
+function sourceInfo(base, source){
+  const s = String(source||"").trim();
+  if(s) return { kind: /^(https?:\/\/|file:\/\/\/)/i.test(s) ? "url" : "file", ref: s };
+  const b = String(base||"").trim();
+  if(/^https?:\/\//i.test(b)) return { kind:"url", ref:b };
+  if(b) return { kind:"file", ref:b };
+  return { kind:"paste", ref:"" };
+}
+function dbCall(cmd, payload){
+  return rust(cmd, payload).then(r=>{
+    if(typeof r !== "string") return r;
+    try{ return JSON.parse(r); }catch(e){ return r; }
+  });
+}
+function relTime(secs){
+  const s = Math.max(0, Math.floor(Date.now()/1000) - Number(secs||0));
+  if(s < 60) return "just now";
+  const m = Math.floor(s/60); if(m < 60) return m+"m ago";
+  const h = Math.floor(m/60); if(h < 24) return h+"h ago";
+  const d = Math.floor(h/24); if(d < 30) return d+"d ago";
+  const mo = Math.floor(d/30); if(mo < 12) return mo+"mo ago";
+  return Math.floor(mo/12)+"y ago";
+}
+function updateSaveState(){
+  const t = cur(), b = $("#save");
+  if(!b) return;
+  const saved = !!(t && t.savedId != null);
+  b.classList.toggle("saved", saved);
+  b.setAttribute("aria-pressed", saved ? "true" : "false");
+  b.title = saved ? "Saved — Ctrl+S updates it" : "Save document (Ctrl+S)";
+}
+function updateWindowTitle(){
+  const t = cur();
+  const title = t && t.name ? t.name : "paste anything";
+  if(useIpc()) rust("set_title", { title }).catch(()=>{});
+}
+async function saveCurrent(){
+  const t = cur(); if(!t || !t.md) return;
+  if(!useIpc()){ showErr(t, "Saving needs the mdview app."); return; }
+  try{
+    const d = await dbCall("save_document", {
+      id: t.savedId, title: t.name, text: t.md,
+      base: t.base||"", source_kind: t.sourceKind, source_ref: t.sourceRef
+    });
+    if(!d || typeof d !== "object" || d.id == null) throw new Error("bad response");
+    t.savedId = d.id;
+    if(d.title) t.name = d.title;
+    paintTabs();
+    updateSaveState();
+    updateWindowTitle();
+    const b = $("#save");
+    if(b){ b.classList.add("flash"); setTimeout(()=> b.classList.remove("flash"), 600); }
+  }catch(e){
+    showErr(t, "Could not save: " + (e.message||e));
+  }
+}
+$("#save").onclick = ()=> saveCurrent();
+
+function startRenameTab(t, tabEl){
+  const s = tabEl.querySelector(".t"); if(!s) return;
+  const input = document.createElement("input");
+  input.className = "tab-input";
+  input.value = t.name;
+  input.maxLength = 60;
+  input.setAttribute("aria-label", "Document title");
+  s.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = ()=>{
+    if(done) return; done = true;
+    const name = input.value.trim() || t.name;
+    t.name = name.slice(0,48);
+    paintTabs();
+    updateWindowTitle();
+    if(t.savedId != null && useIpc()) rust("rename_document", { id: t.savedId, title: t.name }).catch(()=>{});
+  };
+  input.addEventListener("blur", commit);
+  input.addEventListener("keydown", e=>{
+    if(e.key === "Enter"){ e.preventDefault(); commit(); }
+    else if(e.key === "Escape"){ e.preventDefault(); done = true; paintTabs(); }
+  });
+  input.addEventListener("click", e=> e.stopPropagation());
+  input.addEventListener("dblclick", e=> e.stopPropagation());
+}
+
+async function findSimilar(t){
+  if(!useIpc() || !t.md || t.similarDismissed) return;
+  try{
+    const m = await dbCall("find_similar", { text: t.md, source_ref: t.sourceRef });
+    if(!m || typeof m !== "object") return;
+    // The tab may have been replaced with the saved document while we waited,
+    // or attached in the meantime — never offer then.
+    if(t.similarDismissed || t.savedId != null) return;
+    // Same file/URL reopened from its own source: it *is* the same document,
+    // so treat it as already saved. A match from a different source is only
+    // an offer — a rename or Ctrl+S is never re-pointed at it silently.
+    const sameSource = m.source_ref && m.source_ref === t.sourceRef;
+    if(sameSource){
+      if(t.savedId !== m.id){ t.savedId = m.id; updateSaveState(); }
+      return;
+    }
+    if(m.id != null && m.id !== t.savedId) showSimilar(t, m);
+  }catch(e){}
+}
+function showSimilar(t, m){
+  const v = document.getElementById("view-"+t.id); if(!v) return;
+  if(v.querySelector(".similar")) return;
+  const box = document.createElement("div");
+  box.className = "similar";
+  const span = document.createElement("span");
+  span.appendChild(document.createTextNode(m.exact ? "This is identical to " : "This looks like "));
+  const b = document.createElement("b"); b.textContent = m.title || "a saved document";
+  span.appendChild(b);
+  span.appendChild(document.createTextNode(" (saved " + relTime(m.updated_at) + ")."));
+  const open = document.createElement("button");
+  open.type = "button"; open.className = "btn primary"; open.textContent = "Open saved";
+  open.onclick = ()=> openSavedDocument(m.id, t).catch(e=> showErr(t, "Could not open the saved document."));
+  const dismiss = document.createElement("button");
+  dismiss.type = "button"; dismiss.className = "btn"; dismiss.textContent = "Dismiss";
+  dismiss.onclick = ()=>{ box.remove(); t.similarDismissed = true; };
+  box.appendChild(span); box.appendChild(open); box.appendChild(dismiss);
+  const page = v.querySelector(".page");
+  if(page) page.prepend(box);
+}
+async function openSavedDocument(id, replaceTab){
+  const d = await dbCall("open_document", { id });
+  if(!d || typeof d !== "object" || typeof d.text !== "string") throw new Error("bad document");
+  if(replaceTab){
+    replaceTab.md = d.text;
+    replaceTab.name = d.title || replaceTab.name;
+    replaceTab.base = d.base || "";
+    const si = sourceInfo(d.base, d.source_ref);
+    replaceTab.sourceKind = si.kind; replaceTab.sourceRef = si.ref;
+    replaceTab.savedId = d.id;
+    replaceTab.similarDismissed = true;
+    paintTabs();
+    renderTab(replaceTab);
+    updateSaveState();
+    updateWindowTitle();
+  } else {
+    const t = newTab(d.text, d.title, d.base, d.source_ref);
+    t.savedId = d.id;
+    t.similarDismissed = true;
+    updateSaveState();
+  }
+}
+async function loadSavedList(container, query){
+  if(!container || !container.isConnected) return;
+  if(!useIpc()){
+    container.innerHTML = '<div class="saved-empty">Saved documents are available in the mdview app.</div>';
+    return;
+  }
+  try{
+    let rows;
+    if(query && query.trim()){
+      rows = await dbCall("search_documents", { query: query.trim(), limit: 20 });
+    } else {
+      rows = await dbCall("recent_documents", { limit: 8 });
+    }
+    if(!Array.isArray(rows)) rows = [];
+    if(!container.isConnected) return;
+    if(!rows.length){
+      container.innerHTML = '<div class="saved-empty">'
+        + (query && query.trim()
+            ? "No saved documents match “"+esc(query.trim())+"”."
+            : "No saved documents yet. Save one with Ctrl+S.")
+        + '</div>';
+      return;
+    }
+    container.innerHTML = "";
+    for(const r of rows){
+      const item = document.createElement("button");
+      item.type = "button"; item.className = "saved-item";
+      const title = document.createElement("div"); title.className = "saved-title";
+      title.textContent = r.title || "untitled";
+      const meta = document.createElement("div"); meta.className = "saved-meta";
+      meta.textContent = relTime(r.updated_at);
+      const snip = document.createElement("div"); snip.className = "saved-snippet";
+      snip.textContent = r.preview || r.snippet || "";
+      item.appendChild(title); item.appendChild(meta); item.appendChild(snip);
+      item.onclick = ()=> openSavedDocument(r.id).catch(e=> showErr(cur()||{id:activeId}, "Could not open the saved document."));
+      container.appendChild(item);
+    }
+  }catch(e){
+    if(container && container.isConnected){
+      container.innerHTML = '<div class="saved-empty">Saved documents are unavailable.</div>';
+    }
+  }
+}
+// Hook for the future highlight/annotation feature: making a highlight or a
+// note auto-saves the document so it has a stable database identity. The
+// document row is created (or updated) before any annotation references it.
+window.mdviewAutoSaveDocument = function(t){
+  if(!useIpc() || !t || !t.md) return Promise.resolve(null);
+  return dbCall("auto_save_document", {
+    title: t.name, text: t.md, base: t.base||"",
+    source_kind: t.sourceKind, source_ref: t.sourceRef
+  }).then(d=>{
+    if(d && d.id != null){ t.savedId = d.id; updateSaveState(); }
+    return d;
+  }).catch(()=> null);
+};
 
 /* ---------- errors ---------- */
 function showErr(t, msg){
@@ -581,8 +849,8 @@ function openDocs(docs, intoTab){
     useFirst = !!t0;
   }
   for(const d of docs){
-    if(useFirst){ setMarkdown(t0, d.text, d.name, d.base); switchTab(t0.id); useFirst = false; }
-    else newTab(d.text, d.name, d.base);
+    if(useFirst){ setMarkdown(t0, d.text, d.name, d.base, d.source); switchTab(t0.id); useFirst = false; }
+    else newTab(d.text, d.name, d.base, d.source);
   }
   return true;
 }
@@ -645,7 +913,7 @@ async function ingestText(t, text, nameHint){
       return;
     }catch(e){ showErr(t,"Could not fetch URL ("+e.message+"). Rendering as pasted text."); }
   }
-  setMarkdown(t, raw, nameHint || titleOf(raw), "");
+  setMarkdown(t, raw, nameHint || titleOf(raw), "", "");
 }
 function parentDir(p){
   try{
@@ -678,8 +946,8 @@ async function ingestFiles(t, files){
     catch(e){ showErr(t,"Cannot read "+f.name); }
   }
   if(!texts.length) return;
-  openDocs([{text:texts[0].text, name:texts[0].name, base:""}]);
-  for(let i=1;i<texts.length;i++) newTab(texts[i].text, texts[i].name, "");
+  openDocs([{text:texts[0].text, name:texts[0].name, base:"", source:""}]);
+  for(let i=1;i<texts.length;i++) newTab(texts[i].text, texts[i].name, "", "");
 }
 // OS drags sometimes leak paths as text/uri-list (Firefox) or plain text —
 // a free upgrade to full base resolution when present, harmless otherwise.
@@ -735,12 +1003,21 @@ document.addEventListener("drop", async e=>{
 });
 
 /* ---------- rendering ---------- */
-function setMarkdown(t, md, name, base){
+function setMarkdown(t, md, name, base, source){
   t.md = String(md||"");
   t.name = (name||titleOf(t.md)).slice(0,48);
   if(typeof base === "string") t.base = base;
+  if(typeof source === "string"){
+    const si = sourceInfo(t.base, source);
+    t.sourceKind = si.kind; t.sourceRef = si.ref;
+  }
+  t.savedId = null;
+  t.similarDismissed = false;
   paintTabs();
   renderTab(t);
+  updateSaveState();
+  updateWindowTitle();
+  findSimilar(t);
 }
 async function renderTab(t){
   const v = document.getElementById("view-"+t.id); if(!v) return;
@@ -937,7 +1214,7 @@ async function enhance(page, srcMd){
         ev.preventDefault();
         try{
           const d = JSON.parse(await rust("open_path",{url:h}));
-          if(d && d.text!==undefined) newTab(String(d.text||""), d.name||"linked", d.base||"");
+          if(d && d.text!==undefined) newTab(String(d.text||""), d.name||"linked", d.base||"", d.source||"");
         }catch(e){ if(String(e.message||e)!=="__opened__") showErr(cur()||{id:activeId},"Could not open link."); }
       });
     }
@@ -1114,6 +1391,7 @@ $("#theme").onclick = ()=>{
 document.addEventListener("keydown", e=>{
   const mod = e.ctrlKey||e.metaKey;
   if(mod && (e.key==="t"||e.key==="T")){ e.preventDefault(); newTab(); }
+  else if(mod && (e.key==="s"||e.key==="S")){ e.preventDefault(); saveCurrent(); }
   else if(mod && (e.key==="w"||e.key==="W")){ e.preventDefault(); if(cur()) closeTab(cur().id); }
   else if(mod && (e.key==="="||e.key==="+")){ e.preventDefault(); $("#zin").click(); }
   else if(mod && (e.key==="-"||e.key==="_")){ e.preventDefault(); $("#zout").click(); }
@@ -1138,7 +1416,7 @@ if(useIpc()) document.addEventListener("fullscreenchange", ()=>{
 });
 (function boot(){
   const init = window.__MDVIEW_INITIAL__;
-  if(init && typeof init === "object" && init.text){ newTab(String(init.text), init.name||"pasted", init.base||""); }
+  if(init && typeof init === "object" && init.text){ newTab(String(init.text), init.name||"pasted", init.base||"", init.source||""); }
   else if(typeof init === "string" && init.length){ newTab(init, "pasted"); }
   else newTab();
 })();

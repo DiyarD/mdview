@@ -20,6 +20,7 @@ use tao::window::{Fullscreen, WindowBuilder};
 use wry::{DragDropEvent, NewWindowResponse, PageLoadEvent, WebViewBuilder};
 
 mod appicon;
+mod db;
 
 const SINGLE_ADDR: &str = "127.0.0.1:17842";
 const MAX_MD_BYTES: usize = 4 * 1024 * 1024; // 4MB cap per paste keeps memory flat
@@ -31,8 +32,9 @@ const MAX_DOC_BATCH: usize = 8; // one drop/pick opens at most this many docs
 enum UserEvent {
     IpcEval(String),
     NewTabRemote,
-    OpenTabRemote { name: String, text: String, base: String },
+    OpenTabRemote { name: String, text: String, base: String, source: String },
     ToggleFullscreen(String),
+    SetTitle(String),
     ShowWindow,
     PickFile { id: String },
 }
@@ -119,7 +121,7 @@ fn main() {
     let initial = open_arg
         .as_deref()
         .map(resolve_open_arg)
-        .unwrap_or(InitialDoc { name: String::new(), text: String::new(), base: String::new() });
+        .unwrap_or(InitialDoc { name: String::new(), text: String::new(), base: String::new(), source: String::new() });
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let proxy = event_loop.create_proxy();
@@ -181,6 +183,7 @@ fn main() {
                                 name: short_name(&path),
                                 text,
                                 base: parent_dir_of(&path),
+                                source: path.clone(),
                             });
                         }
                     } else {
@@ -211,6 +214,7 @@ fn main() {
                                 name: short_name(&path),
                                 text,
                                 base: parent_dir_of(&path),
+                                source: path.clone(),
                             });
                         }
                     } else {
@@ -250,6 +254,7 @@ fn main() {
                         name: d.name,
                         text: d.text,
                         base: d.base,
+                        source: d.source,
                     });
                 }
             }
@@ -271,6 +276,7 @@ fn main() {
                             name: doc.name,
                             text: doc.text,
                             base: doc.base,
+                            source: doc.source,
                         });
                     }
                 }
@@ -287,16 +293,21 @@ fn main() {
                         "window.__mdview_new_tab_remote && window.__mdview_new_tab_remote();",
                     );
                 }
-                UserEvent::OpenTabRemote { name, text, base } => {
+                UserEvent::OpenTabRemote { name, text, base, source } => {
                     window.set_focus();
                     window.set_visible(true);
-                    let payload = serde_json::to_string(&json!({ "name": name, "text": text, "base": base }))
-                        .unwrap_or_else(|_| "{\"name\":\"pasted\",\"text\":\"\",\"base\":\"\"}".into());
+                    let payload = serde_json::to_string(&json!({ "name": name, "text": text, "base": base, "source": source }))
+                        .unwrap_or_else(|_| "{\"name\":\"pasted\",\"text\":\"\",\"base\":\"\",\"source\":\"\"}".into());
                     let js = format!(
                         "window.__mdview_open_payload && window.__mdview_open_payload({});",
                         payload
                     );
                     let _ = webview.evaluate_script(&js);
+                }
+                UserEvent::SetTitle(title) => {
+                    // The window chrome follows the active document, so renaming
+                    // a tab is visible without opening the tab.
+                    window.set_title(&format!("mdview — {}", title));
                 }
                 UserEvent::PickFile { id } => {
                     // Modal file dialog runs on the UI thread (owner window + z-order).
@@ -419,7 +430,7 @@ fn sanitize_html(s: String) -> String {
     String::from_utf8(out).unwrap_or_default()
 }
 
-fn truncate_str(s: &str, max_bytes: usize) -> &str {
+pub(crate) fn truncate_str(s: &str, max_bytes: usize) -> &str {
     if s.len() <= max_bytes {
         return s;
     }
@@ -911,6 +922,13 @@ fn serve_local_media(uri: &str) -> http::Response<Cow<'static, [u8]>> {
 
 /* ================= IPC: JS -> Rust ================= */
 
+/// Lock the process-wide document store. The DB is one connection behind a
+/// mutex; every command is local and indexed, so reads are microseconds and a
+/// save is low milliseconds.
+fn db_lock() -> Result<std::sync::MutexGuard<'static, db::Store>, String> {
+    db::store().and_then(|m| m.lock().map_err(|_| "document database lock poisoned".to_string()))
+}
+
 fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
     let v: serde_json::Value = match serde_json::from_str(body) {
         Ok(v) => v,
@@ -969,6 +987,7 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
                             "text": text,
                             "name": short_name(&path),
                             "base": parent_dir_of(&path),
+                            "source": path,
                         }))
                         .unwrap_or_default())
                     } else {
@@ -994,6 +1013,78 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
         "save_prefs" => {
             let payload = serde_json::to_string(&v).unwrap_or_default();
             save_prefs_json(&payload);
+            let js = format!(
+                "window.__mdview_ipc_result && window.__mdview_ipc_result({}, true, true);",
+                serde_json::to_string(&id).unwrap_or("\"\"".into())
+            );
+            let _ = proxy.send_event(UserEvent::IpcEval(js));
+        }
+        "save_document" | "auto_save_document" => {
+            let doc_id = v.get("id").and_then(|x| x.as_i64());
+            let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let base = v.get("base").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let source_kind = v.get("source_kind").and_then(|x| x.as_str()).unwrap_or("paste").to_string();
+            let source_ref = v.get("source_ref").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let res = db_lock()
+                .and_then(|s| {
+                    let r = if cmd == "auto_save_document" {
+                        s.auto_save(&title, &text, &base, &source_kind, &source_ref)
+                    } else {
+                        s.save(doc_id, &title, &text, &base, &source_kind, &source_ref)
+                    };
+                    r.map_err(|e| e.to_string())
+                })
+                .and_then(|d| serde_json::to_string(&d).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "open_document" => {
+            let doc_id = v.get("id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let res = db_lock()
+                .and_then(|s| s.open_document(doc_id).map_err(|e| e.to_string()))
+                .and_then(|d| serde_json::to_string(&d).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "search_documents" => {
+            let query = v.get("query").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let limit = v
+                .get("limit")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(db::DEFAULT_SEARCH_LIMIT as u64) as usize;
+            let res = db_lock()
+                .and_then(|s| s.search(&query, limit).map_err(|e| e.to_string()))
+                .and_then(|hits| serde_json::to_string(&hits).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "recent_documents" => {
+            let limit = v
+                .get("limit")
+                .and_then(|x| x.as_u64())
+                .unwrap_or(db::DEFAULT_RECENT_LIMIT as u64) as usize;
+            let res = db_lock()
+                .and_then(|s| s.recent(limit).map_err(|e| e.to_string()))
+                .and_then(|docs| serde_json::to_string(&docs).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "rename_document" => {
+            let doc_id = v.get("id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let res = db_lock()
+                .and_then(|s| s.rename(doc_id, &title).map_err(|e| e.to_string()))
+                .and_then(|ok| serde_json::to_string(&ok).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "find_similar" => {
+            let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let source_ref = v.get("source_ref").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let res = db_lock()
+                .and_then(|s| s.find_similar(&text, &source_ref).map_err(|e| e.to_string()))
+                .and_then(|m| serde_json::to_string(&m).map_err(|e| e.to_string()));
+            send_ipc_result(&proxy, &id, res);
+        }
+        "set_title" => {
+            let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let _ = proxy.send_event(UserEvent::SetTitle(title));
             let js = format!(
                 "window.__mdview_ipc_result && window.__mdview_ipc_result({}, true, true);",
                 serde_json::to_string(&id).unwrap_or("\"\"".into())
@@ -1085,40 +1176,45 @@ struct InitialDoc {
     name: String,
     text: String,
     base: String,
+    /// Full source path/URL, when the document came from one. The internal
+    /// database uses it as a stable alias for the same file or page.
+    source: String,
 }
 
 fn resolve_open_arg(arg: &str) -> InitialDoc {
     let t = arg.trim().trim_matches(|c| c == '"' || c == '\'');
     if t.starts_with("http://") || t.starts_with("https://") {
         return match fetch_url_text(t) {
-            Ok(text) => InitialDoc { name: short_name(t), text, base: t.to_string() },
+            Ok(text) => InitialDoc { name: short_name(t), text, base: t.to_string(), source: t.to_string() },
             Err(e) => InitialDoc {
                 name: "error".into(),
                 text: format!("# Could not fetch URL\n\n`{}`\n\n{}", t, e),
                 base: String::new(),
+                source: String::new(),
             },
         };
     }
     let p = PathBuf::from(t);
     if p.exists() {
         return match read_file_limited(t, MAX_MD_BYTES) {
-            Ok(text) => InitialDoc { name: short_name(t), text, base: parent_dir_of(t) },
+            Ok(text) => InitialDoc { name: short_name(t), text, base: parent_dir_of(t), source: t.to_string() },
             Err(e) => InitialDoc {
                 name: "error".into(),
                 text: format!("# Could not open file\n\n`{}`\n\n{}", t, e),
                 base: String::new(),
+                source: String::new(),
             },
         };
     }
     // Bare markdown passed on the command line.
-    InitialDoc { name: "pasted".into(), text: t.to_string(), base: String::new() }
+    InitialDoc { name: "pasted".into(), text: t.to_string(), base: String::new(), source: String::new() }
 }
 
 fn read_path_as_doc(path: &PathBuf) -> Option<InitialDoc> {
     let s = path.to_string_lossy().to_string();
     read_file_limited(&s, MAX_MD_BYTES)
         .ok()
-        .map(|text| InitialDoc { name: short_name(&s), text, base: parent_dir_of(&s) })
+        .map(|text| InitialDoc { name: short_name(&s), text, base: parent_dir_of(&s), source: s.clone() })
 }
 
 /* ============ paths -> docs (drops / clipboard / file dialog) ============ */
@@ -1131,6 +1227,8 @@ struct DocPayload {
     text: String,
     name: String,
     base: String,
+    /// Full path/URL for the internal database's source alias.
+    source: String,
 }
 
 fn docs_from_paths(paths: &[PathBuf]) -> Vec<DocPayload> {
@@ -1157,7 +1255,7 @@ fn push_doc(p: &Path, docs: &mut Vec<DocPayload>) {
         return;
     }
     if let Ok(text) = read_file_limited(&s, MAX_MD_BYTES) {
-        docs.push(DocPayload { text, name: short_name(&s), base: parent_dir_of(&s) });
+        docs.push(DocPayload { text, name: short_name(&s), base: parent_dir_of(&s), source: s.clone() });
     }
 }
 
@@ -1275,7 +1373,7 @@ fn short_name(p: &str) -> String {
 
 fn build_html(initial: &InitialDoc) -> String {
     let template = include_str!("../frontend/index.html");
-    let init_json = serde_json::to_string(&json!({ "name": initial.name, "text": initial.text, "base": initial.base }))
+    let init_json = serde_json::to_string(&json!({ "name": initial.name, "text": initial.text, "base": initial.base, "source": initial.source }))
         .unwrap_or_else(|_| "{\"name\":\"\",\"text\":\"\",\"base\":\"\"}".into());
     template
         .replacen("__MDVIEW_INITIAL_JSON__", &init_json, 1)
@@ -1769,6 +1867,7 @@ fn spawn_accept_loop(listener: TcpListener, proxy: tao::event_loop::EventLoopPro
                                 name: short_name(&path),
                                 text,
                                 base: path.clone(),
+                                source: path.clone(),
                             });
                         }
                         Err(_) => {
@@ -1782,6 +1881,7 @@ fn spawn_accept_loop(listener: TcpListener, proxy: tao::event_loop::EventLoopPro
                                 name: short_name(&path),
                                 text,
                                 base: parent_dir_of(&path),
+                                source: path.clone(),
                             });
                         }
                         Err(_) => {
