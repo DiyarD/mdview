@@ -214,6 +214,7 @@
   .err{ max-width:var(--read-width); margin:0 auto 14px; padding:11px 16px; border:1px solid #c1544a; border-radius:10px;
     background:rgba(193,84,74,.08); font-size:13px; font-family:var(--sans); display:none; }
   /* Save button: quiet until it has something to say. */
+  #save svg{ display:block; width:15px; height:15px; }
   #save.saved{ color:var(--accent); }
   #save.flash{ animation:mdv-save-flash .6s ease; }
   @keyframes mdv-save-flash{ 0%{ background:var(--accent-soft); border-color:var(--accent); }
@@ -413,7 +414,7 @@
   <button class="ctl" id="zin" title="Zoom in (Ctrl+=)">A+</button>
   <button class="ctl" id="zout" title="Zoom out (Ctrl+-)">A−</button>
   <button class="ctl" id="fs" title="Fullscreen (F11)">⛶</button>
-  <button class="ctl" id="save" title="Save document (Ctrl+S)" aria-pressed="false">💾</button>
+  <button class="ctl" id="save" title="Save document (Ctrl+S)" aria-pressed="false" aria-label="Save document"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h7.4L17 7.1V15a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 15Z"/><path d="M7 3v6h6V3M7.5 13h5"/></svg></button>
   <input id="width" type="range" min="620" max="1180" step="10" value="860" title="Reading width — also [ / ] or Alt+Left/Right">
   <button class="ctl" id="theme" title="Toggle light/dark">◐</button>
 </div>
@@ -552,6 +553,7 @@ function paintTabs(){
     const d = document.createElement("div");
     d.className = "tab"+(t.id===activeId?" active":"");
     d.title = t.name;
+    d.dataset.id = String(t.id);
     const s = document.createElement("span"); s.className="t"; s.textContent = t.name; d.appendChild(s);
     const x = document.createElement("button"); x.className="x"; x.textContent="×"; x.title="Close (Ctrl+W)";
     x.onclick = e=>{ e.stopPropagation(); closeTab(t.id); };
@@ -561,12 +563,19 @@ function paintTabs(){
     tabsEl.appendChild(d);
   }
 }
+// Switching tabs only toggles a class — the strip is NOT rebuilt, so the
+// element under a double click survives and `dblclick` can actually fire.
+function updateActiveTabClass(){
+  tabsEl.querySelectorAll(".tab").forEach(el=>{
+    el.classList.toggle("active", Number(el.dataset.id) === activeId);
+  });
+}
 function switchTab(id){
   activeId = id;
   document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active", v.id==="view-"+id));
   const t = tabs.find(x=>x.id===id);
   if(t && t.dirty && t.rendered) renderTab(t); // theme changed while hidden
-  paintTabs();
+  updateActiveTabClass();
   buildToc(); // contents follow the newly visible page
   updateSaveState();
   updateWindowTitle();
@@ -640,7 +649,7 @@ async function saveCurrent(){
   if(!useIpc()){ showErr(t, "Saving needs the mdview app."); return; }
   try{
     const d = await dbCall("save_document", {
-      id: t.savedId, title: t.name, text: t.md,
+      doc_id: t.savedId, title: t.name, text: t.md,
       base: t.base||"", source_kind: t.sourceKind, source_ref: t.sourceRef
     });
     if(!d || typeof d !== "object" || d.id == null) throw new Error("bad response");
@@ -674,7 +683,7 @@ function startRenameTab(t, tabEl){
     t.name = name.slice(0,48);
     paintTabs();
     updateWindowTitle();
-    if(t.savedId != null && useIpc()) rust("rename_document", { id: t.savedId, title: t.name }).catch(()=>{});
+    if(t.savedId != null && useIpc()) rust("rename_document", { doc_id: t.savedId, title: t.name }).catch(e=> showErr(t, "Could not rename: " + (e.message||e)));
   };
   input.addEventListener("blur", commit);
   input.addEventListener("keydown", e=>{
@@ -690,8 +699,6 @@ async function findSimilar(t){
   try{
     const m = await dbCall("find_similar", { text: t.md, source_ref: t.sourceRef });
     if(!m || typeof m !== "object") return;
-    // The tab may have been replaced with the saved document while we waited,
-    // or attached in the meantime — never offer then.
     if(t.similarDismissed || t.savedId != null) return;
     // Same file/URL reopened from its own source: it *is* the same document,
     // so treat it as already saved. A match from a different source is only
@@ -701,8 +708,10 @@ async function findSimilar(t){
       if(t.savedId !== m.id){ t.savedId = m.id; updateSaveState(); }
       return;
     }
-    if(m.id != null && m.id !== t.savedId) showSimilar(t, m);
-  }catch(e){}
+    if(m.id != null) showSimilar(t, m);
+  }catch(e){
+    showErr(t, "Could not check the saved-document store: " + (e.message||e));
+  }
 }
 function showSimilar(t, m){
   const v = document.getElementById("view-"+t.id); if(!v) return;
@@ -725,7 +734,7 @@ function showSimilar(t, m){
   if(page) page.prepend(box);
 }
 async function openSavedDocument(id, replaceTab){
-  const d = await dbCall("open_document", { id });
+  const d = await dbCall("open_document", { doc_id: id });
   if(!d || typeof d !== "object" || typeof d.text !== "string") throw new Error("bad document");
   if(replaceTab){
     replaceTab.md = d.text;
@@ -746,8 +755,10 @@ async function openSavedDocument(id, replaceTab){
     updateSaveState();
   }
 }
+let loadSavedSeq = 0;
 async function loadSavedList(container, query){
   if(!container || !container.isConnected) return;
+  const seq = ++loadSavedSeq; // drop stale responses — the newest request wins
   if(!useIpc()){
     container.innerHTML = '<div class="saved-empty">Saved documents are available in the mdview app.</div>';
     return;
@@ -759,6 +770,7 @@ async function loadSavedList(container, query){
     } else {
       rows = await dbCall("recent_documents", { limit: 8 });
     }
+    if(seq !== loadSavedSeq) return; // superseded while the IPC roundtrip ran
     if(!Array.isArray(rows)) rows = [];
     if(!container.isConnected) return;
     if(!rows.length){
@@ -784,24 +796,42 @@ async function loadSavedList(container, query){
       container.appendChild(item);
     }
   }catch(e){
-    if(container && container.isConnected){
-      container.innerHTML = '<div class="saved-empty">Saved documents are unavailable.</div>';
+    if(seq === loadSavedSeq && container && container.isConnected){
+      container.innerHTML = '<div class="saved-empty">Saved documents are unavailable: '+esc(e && e.message || e)+'</div>';
     }
   }
 }
 // Hook for the future highlight/annotation feature: making a highlight or a
-// note auto-saves the document so it has a stable database identity. The
-// document row is created (or updated) before any annotation references it.
+// note auto-saves the document so it has a stable database identity. Calls
+// are trailing-edge debounced (bursts collapse into one IPC), every pending
+// tab is flushed, and failures surface — never swallowed. The document row is
+// created (or updated) before any annotation references it.
+const autoSaveJobs = [];
+let autoSaveTimer = 0;
 window.mdviewAutoSaveDocument = function(t){
-  if(!useIpc() || !t || !t.md) return Promise.resolve(null);
-  return dbCall("auto_save_document", {
-    title: t.name, text: t.md, base: t.base||"",
-    source_kind: t.sourceKind, source_ref: t.sourceRef
-  }).then(d=>{
-    if(d && d.id != null){ t.savedId = d.id; updateSaveState(); }
-    return d;
-  }).catch(()=> null);
+  return new Promise(resolve=>{
+    if(!useIpc() || !t || !t.md){ resolve(null); return; }
+    autoSaveJobs.push({ t, resolve });
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(flushAutoSave, 500);
+  });
 };
+async function flushAutoSave(){
+  const jobs = autoSaveJobs.splice(0);
+  for(const { t, resolve } of jobs){
+    try{
+      const d = await dbCall("auto_save_document", {
+        title: t.name, text: t.md, base: t.base||"",
+        source_kind: t.sourceKind, source_ref: t.sourceRef
+      });
+      if(d && d.id != null){ t.savedId = d.id; updateSaveState(); }
+      resolve(d);
+    }catch(e){
+      showErr(t, "Could not auto-save the document: " + (e.message||e));
+      resolve(null);
+    }
+  }
+}
 
 /* ---------- errors ---------- */
 function showErr(t, msg){

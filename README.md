@@ -532,6 +532,15 @@ resolution, vendored-asset inflation, preferences, the local-media gate and the
 document database (schema migration, compression round-trips, FTS search,
 ranking, fuzzy matching, auto-save idempotency and cross-source identity).
 
+UI behavior is tested against the real page by `node tools/test-ui.js`. It
+assembles the interface exactly like the screenshots below, but with a
+stateful fake document store behind the IPC boundary, then drives headless
+Chrome through the flows the user actually performs: paste a document, save it
+with the 💾 button, double-click a tab to rename it (Enter commits), open
+**Saved documents** on the empty tab, search (debounced) and click the result —
+and verifies the similarity offer swaps in the saved document only on explicit
+**Open saved**. It exits non-zero if any of that breaks.
+
 ### Regenerating the screenshots
 
 The screenshots in this README are **not** mockups — they are produced from the
@@ -557,6 +566,8 @@ Other tools:
 
 | Tool | Purpose |
 |---|---|
+| `tools/page-harness.js` | Shared page assembly + headless-Chrome driver for the browser tools |
+| `tools/test-ui.js` | Behavioral test of the real page: paste → save → rename → search → open → similarity offer |
 | `tools/vendor-assets.py` | Re-gzip vendored renderer assets in place |
 | `tools/build-preview.js` | Assemble a standalone `preview-theme.html` for CSS work |
 | `tools/check-syntax.js` | Syntax-check the frontend sources |

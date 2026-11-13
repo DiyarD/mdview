@@ -934,6 +934,10 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
         Ok(v) => v,
         Err(_) => return,
     };
+    // `id` is the bridge's request-correlation key — it is NOT a document id.
+    // Payload keys must never carry `id` (see `doc_id` below); if one ever
+    // does, the answer is routed to a nonexistent pending entry and the JS
+    // promise hangs with no error. Keep this strict.
     let cmd = v.get("cmd").and_then(|c| c.as_str()).unwrap_or("").to_string();
     let id = v.get("id").and_then(|c| c.as_str()).unwrap_or("").to_string();
     match cmd.as_str() {
@@ -1020,7 +1024,9 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
             let _ = proxy.send_event(UserEvent::IpcEval(js));
         }
         "save_document" | "auto_save_document" => {
-            let doc_id = v.get("id").and_then(|x| x.as_i64());
+            // The bridge reserves `id` for request correlation — payload keys
+            // must never carry it. Document ids travel as `doc_id`.
+            let doc_id = v.get("doc_id").and_then(|x| x.as_i64());
             let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let text = v.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let base = v.get("base").and_then(|x| x.as_str()).unwrap_or("").to_string();
@@ -1039,7 +1045,7 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
             send_ipc_result(&proxy, &id, res);
         }
         "open_document" => {
-            let doc_id = v.get("id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let doc_id = v.get("doc_id").and_then(|x| x.as_i64()).unwrap_or(-1);
             let res = db_lock()
                 .and_then(|s| s.open_document(doc_id).map_err(|e| e.to_string()))
                 .and_then(|d| serde_json::to_string(&d).map_err(|e| e.to_string()));
@@ -1067,7 +1073,7 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
             send_ipc_result(&proxy, &id, res);
         }
         "rename_document" => {
-            let doc_id = v.get("id").and_then(|x| x.as_i64()).unwrap_or(-1);
+            let doc_id = v.get("doc_id").and_then(|x| x.as_i64()).unwrap_or(-1);
             let title = v.get("title").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let res = db_lock()
                 .and_then(|s| s.rename(doc_id, &title).map_err(|e| e.to_string()))
