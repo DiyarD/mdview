@@ -1748,7 +1748,10 @@ function annWireEvents(){
   });
   document.addEventListener("click", e => {
     const editor = $("#annEditor");
-    const inEditor = editor && !editor.hidden && editor.contains(e.target);
+    // Containment, not visibility: editor buttons (recolor, trash) hide the
+    // palette synchronously in their own handler, so `editor.hidden` alone
+    // would misclassify this very click as one on the document beneath it.
+    const inEditor = editor && editor.contains(e.target);
     const inPanel = e.target.closest && e.target.closest("#annPanel");
     const inPropose = e.target.closest && e.target.closest("#annPropose");
     if(inEditor || inPanel || inPropose) return;

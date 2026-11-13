@@ -385,9 +385,13 @@ async function main() {
     report("optimistic highlight paints before the store write lands", optimistic >= 3);
     report("the optimistic highlight settles after the store confirms", await waitFor(send,
       "document.querySelector('#annCount').textContent === '3'", 3000));
-    await evalValue(send, clickAtChar('alpha'));
+    await evalValue(send, clickAtChar('bravo'));
     await waitFor(send, "!document.querySelector('#annEditor').hidden", 5000);
     await evalValue(send, "(() => { const b = document.querySelector('#annEditor .ann-color[data-color=\"pink\"]'); if (b) b.click(); return true; })()");
+    // The recolor hides the palette in its own handler; the same click must
+    // NOT also reach the highlight underneath it and reopen its palette.
+    report("recolor click does not leak through to the underlying highlight", (await evalValue(send,
+      "document.querySelector('#annEditor').hidden")) === true);
     await evalValue(send, "(() => new Promise(r => setTimeout(r, 80)))()");
     const optimisticPink = await evalValue(send, "window.CSS && CSS.highlights && CSS.highlights.get('mdv-ann-pink') ? CSS.highlights.get('mdv-ann-pink').size : 0");
     report("optimistic recolor paints before the store write lands", optimisticPink >= 1);
