@@ -325,6 +325,17 @@ async function main() {
     await evalValue(send, "document.querySelector('#annToggle').click()"); // panel closed
     // Layering: a sub-chunk stacks inside the outer highlight; clicking the
     // overlapping region must open the INNER (most specific) annotation.
+    const clickAtChar = (needle) => `(() => {
+      const p = document.querySelector('.view.active .markdown-body p');
+      const tn = p && p.firstChild;
+      const ix = tn.nodeValue.indexOf(${JSON.stringify(needle)});
+      const r = document.createRange();
+      r.setStart(tn, ix);
+      r.collapse(true);
+      const rect = r.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: rect.left + 2, clientY: rect.top + 2, bubbles: true }));
+      return true;
+    })()`;
     const selectBravo = `(() => {
       const p = document.querySelector('.view.active .markdown-body p');
       const tn = p && p.firstChild;
@@ -341,6 +352,9 @@ async function main() {
     })()`;
     await evalValue(send, selectBravo);
     await waitFor(send, "!document.querySelector('#annPropose').hidden", 5000);
+    await evalValue(send, clickAtChar('bravo')); // the click that ends the drag
+    const dragRelease = await evalValue(send, "!document.querySelector('#annPropose').hidden && document.querySelector('#annEditor').hidden");
+    report("clicking away after a selection keeps only the propose button", dragRelease === true);
     await evalValue(send, "document.querySelector('#annPropose').click()");
     report("proposing with a fresh selection deselects it (highlight must be visible)", await waitFor(send,
       "window.getSelection().rangeCount === 0 || window.getSelection().isCollapsed", 3000));
@@ -350,17 +364,6 @@ async function main() {
     })()`, 8000));
     report("same-color layers stack in one paint group", await waitFor(send,
       "window.CSS && CSS.highlights && CSS.highlights.get('mdv-ann-blue').size >= 2", 8000));
-    const clickAtChar = (needle) => `(() => {
-      const p = document.querySelector('.view.active .markdown-body p');
-      const tn = p && p.firstChild;
-      const ix = tn.nodeValue.indexOf(${JSON.stringify(needle)});
-      const r = document.createRange();
-      r.setStart(tn, ix);
-      r.collapse(true);
-      const rect = r.getBoundingClientRect();
-      document.dispatchEvent(new MouseEvent('click', { clientX: rect.left + 2, clientY: rect.top + 2, bubbles: true }));
-      return true;
-    })()`;
     await evalValue(send, clickAtChar('bravo'));
     report("clicking the sub-chunk opens ITS editor (innermost wins)", await waitFor(send,
       "!document.querySelector('#annEditor').hidden && (document.querySelector('#annEditor .ann-note-wrap') || {}).hidden", 5000));

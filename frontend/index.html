@@ -1739,8 +1739,11 @@ function annWireEvents(){
     setTimeout(() => {
       const sel = window.getSelection();
       const anchor = annAnchorFromSelection(root, sel);
-      if(anchor) showAnnPropose(anchor, sel);
-      else hideAnnPropose();
+      if(anchor){
+        const editor = $("#annEditor");
+        if(editor && !editor.hidden) annCloseEditor(); // a fresh selection takes over
+        showAnnPropose(anchor, sel);
+      } else hideAnnPropose();
     }, 70);
   });
   document.addEventListener("click", e => {
@@ -1749,6 +1752,12 @@ function annWireEvents(){
     const inPanel = e.target.closest && e.target.closest("#annPanel");
     const inPropose = e.target.closest && e.target.closest("#annPropose");
     if(inEditor || inPanel || inPropose) return;
+    // A click that ends a selection drag is a new highlight opportunity, not
+    // an intent to edit the one underneath — only the proposal button shows.
+    // (A plain click collapses the selection, so this only suppresses the
+    // drag case.)
+    const sel = window.getSelection();
+    if(sel && !sel.isCollapsed && sel.rangeCount) return;
     const t = cur();
     const hit = t ? annHitAt(t, e.clientX, e.clientY) : null;
     if(hit){
