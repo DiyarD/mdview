@@ -362,9 +362,10 @@ fn main() {
 
 /* ================= markdown rendering (Rust, streaming, low-alloc) ================= */
 
-fn render_markdown_to_html(md: &str, base: Option<&str>) -> String {
-    use pulldown_cmark::{html, Options, Parser};
-    let md = truncate_str(md, MAX_MD_BYTES);
+/// Every markdown option the renderer understands — block-span extraction must
+/// see exactly the same document the HTML renderer sees.
+fn md_options() -> pulldown_cmark::Options {
+    use pulldown_cmark::Options;
     let mut opts = Options::empty();
     opts.insert(Options::ENABLE_TABLES);
     opts.insert(Options::ENABLE_FOOTNOTES);
@@ -381,9 +382,179 @@ fn render_markdown_to_html(md: &str, base: Option<&str>) -> String {
     // $ delimiters breaks KaTeX's delimiter-driven auto-render.)
     opts.insert(Options::ENABLE_MATH);
     opts.insert(Options::ENABLE_GFM);
-    let parser = Parser::new_ext(&md, opts);
+    opts
+}
+
+/// The kind of one top-level markdown block — used to tag rendered blocks for
+/// the editor (and for sanity-checking the DOM). `None` = not a top-level
+/// block start.
+fn top_block_kind(tag: &pulldown_cmark::Tag) -> Option<&'static str> {
+    use pulldown_cmark::Tag;
+    Some(match tag {
+        Tag::Heading { .. } => "heading",
+        Tag::Paragraph => "paragraph",
+        Tag::CodeBlock(..) => "code",
+        Tag::BlockQuote(..) => "quote",
+        Tag::List(..) => "list",
+        Tag::Table(..) => "table",
+        Tag::FootnoteDefinition(..) => "footnote",
+        Tag::HtmlBlock => "html",
+        Tag::MetadataBlock(..) => "frontmatter",
+        Tag::DefinitionList => "deflist",
+        _ => return None,
+    })
+}
+
+/// One top-level markdown block, in line coordinates. Byte offsets are
+/// deliberately not exposed: the page is UTF-16 and we refuse to let JS do
+/// byte math. `start_line` inclusive, `end_line` exclusive.
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
+pub(crate) struct BlockSpan {
+    pub index: usize,
+    pub kind: &'static str,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+/// Line starts (byte offset of each line's first byte) and the line of a byte.
+fn line_table(md: &str) -> Vec<usize> {
+    let mut starts = vec![0usize];
+    for (i, b) in md.bytes().enumerate() {
+        if b == b'\n' {
+            starts.push(i + 1);
+        }
+    }
+    starts
+}
+
+fn line_of(table: &[usize], byte: usize) -> usize {
+    match table.binary_search(&byte) {
+        Ok(n) => n,
+        Err(n) => n - 1, // table[0] == 0 <= byte, so n >= 1
+    }
+}
+
+/// Collect top-level block spans of the (already truncated) document. Runs
+/// the exact same parser configuration as the renderer.
+pub(crate) fn block_spans(md: &str) -> Vec<BlockSpan> {
+    use pulldown_cmark::{Event, Parser};
+    let opts = md_options();
+    let table = line_table(md);
+    let mut spans = Vec::new();
+    let mut depth: i32 = 0;
+    let mut open: Vec<Option<&'static str>> = Vec::new();
+    let mut index = 0usize;
+    // pulldown assigns the trailing blank line after a list to the list item,
+    // so trim trailing blank-only lines: a span must end on real content.
+    let lines: Vec<&str> = md.split('\n').collect();
+    let trim_end = |start_line: usize, mut end_line: usize| -> usize {
+        while end_line > start_line && lines[end_line - 1].trim().is_empty() {
+            end_line -= 1;
+        }
+        end_line
+    };
+    for (ev, range) in Parser::new_ext(md, opts).into_offset_iter() {
+        match ev {
+            Event::Start(ref tag) => {
+                if depth == 0 {
+                    let kind = top_block_kind(tag);
+                    if kind.is_some() { open.push(Some(kind_of(tag))); } else { open.push(None); }
+                } else {
+                    open.push(None);
+                }
+                depth += 1;
+            }
+            Event::End(_) => {
+                depth -= 1;
+                if let Some(Some(kind)) = open.pop() {
+                    if depth == 0 {
+                        let start_line = line_of(&table, range.start);
+                        let end_line = trim_end(start_line, line_of(&table, range.end.saturating_sub(1).max(range.start)) + 1);
+                        spans.push(BlockSpan { index, kind, start_line, end_line });
+                        index += 1;
+                    }
+                }
+            }
+            Event::Rule | Event::DisplayMath(_) => {
+                if depth == 0 {
+                    let kind = if matches!(ev, Event::Rule) { "rule" } else { "math" };
+                    let start_line = line_of(&table, range.start);
+                    let end_line = trim_end(start_line, line_of(&table, range.end.saturating_sub(1).max(range.start)) + 1);
+                    spans.push(BlockSpan { index, kind, start_line, end_line });
+                    index += 1;
+                }
+            }
+            _ => {}
+        }
+    }
+    spans
+}
+
+fn kind_of(tag: &pulldown_cmark::Tag) -> &'static str {
+    top_block_kind(tag).unwrap_or("unknown")
+}
+
+fn render_markdown_to_html(md: &str, base: Option<&str>) -> String {
+    use pulldown_cmark::{html, Parser};
+    let md = truncate_str(md, MAX_MD_BYTES);
+    let opts = md_options();
+    // Render block-by-block instead of one push_html pass: each top-level
+    // block becomes <div class="md-block" data-blk="N">…</div>. The page maps
+    // rendered elements back to source lines via data-blk (display:contents
+    // in CSS keeps the wrapper boxless). Per-block rendering is exact: the
+    // event stream, not HTML string surgery, decides block boundaries.
     let mut out = String::with_capacity(md.len().min(1 << 20));
-    html::push_html(&mut out, parser);
+    let mut buf: Vec<pulldown_cmark::Event<'_>> = Vec::new();
+    let mut depth: i32 = 0;
+    let mut top_open = 0usize;
+    let mut blk_index = 0usize;
+    let flush = |out: &mut String, buf: &mut Vec<pulldown_cmark::Event<'_>>, blk_index: &mut usize, wrapped: bool| {
+        if buf.is_empty() {
+            return;
+        }
+        if wrapped {
+            out.push_str("<div class=\"md-block\" data-blk=\"");
+            out.push_str(&blk_index.to_string());
+            out.push_str("\">");
+            *blk_index += 1;
+        }
+        html::push_html(out, buf.drain(..));
+        if wrapped {
+            out.push_str("</div>\n");
+        }
+    };
+    for (ev, _range) in Parser::new_ext(&md, opts).into_offset_iter() {
+        let ev = ev.into_static();
+        let opens_block = matches!(&ev, pulldown_cmark::Event::Start(tag) if top_block_kind(tag).is_some());
+        if depth == 0 && opens_block && !buf.is_empty() {
+            // Streams from our option set never do this; flush the stray
+            // buffer rather than losing its bytes.
+            flush(&mut out, &mut buf, &mut blk_index, false);
+        }
+        match &ev {
+            pulldown_cmark::Event::Start(_) => depth += 1,
+            pulldown_cmark::Event::End(_) => depth -= 1,
+            _ => {}
+        }
+        if opens_block {
+            top_open += 1;
+        }
+        // Leaf events that ARE blocks: a horizontal rule, a display-math block.
+        // Both carry no Start/End pair, so close their block on sight.
+        let leaf_block = matches!(&ev, pulldown_cmark::Event::Rule | pulldown_cmark::Event::DisplayMath(_));
+        buf.push(ev);
+        if leaf_block && depth == 0 {
+            flush(&mut out, &mut buf, &mut blk_index, true);
+        } else if depth == 0 && matches!(buf.last(), Some(pulldown_cmark::Event::End(_))) {
+            if top_open > 0 {
+                flush(&mut out, &mut buf, &mut blk_index, true);
+                top_open -= 1;
+            } else {
+                flush(&mut out, &mut buf, &mut blk_index, false);
+            }
+        }
+    }
+    flush(&mut out, &mut buf, &mut blk_index, false);
     let out = sanitize_html(out);
     let out = resolve_media_urls(out, base);
     let out = upgrade_image_links(out);
@@ -415,6 +586,9 @@ fn sanitize_html(s: String) -> String {
         match find_ci(&b, b"</script>", after_open.min(b.len())) {
             Some(end_abs) => {
                 let end = (end_abs + "</script>".len()).min(b.len());
+                // The block wrapper around this content (.md-block, see the
+                // renderer) survives stripping, so the editor's block mapping
+                // stays aligned even when every byte of a block is dropped.
                 b.drain(start..end);
             }
             None => {
@@ -1346,6 +1520,11 @@ fn serve_app_asset(uri: &str) -> Option<http::Response<Cow<'static, [u8]>>> {
             include_bytes!("../frontend/vendor/mermaid/mermaid.min.js.gz"),
             "text/javascript",
         ),
+        "codemirror/codemirror.min.js" => gz_asset(
+            name,
+            include_bytes!("../frontend/vendor/codemirror.min.js.gz"),
+            "text/javascript",
+        ),
         "katex/katex.min.css" => {
             // Fonts are referenced relatively by the stylesheet, and the page
             // has no base URL to resolve them against, so they must be absolute.
@@ -1416,6 +1595,21 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
                 "window.__mdview_ipc_result && window.__mdview_ipc_result({}, true, {});",
                 serde_json::to_string(&id).unwrap_or("\"\"".into()),
                 serde_json::to_string(&html).unwrap_or("\"\"".into())
+            );
+            let _ = proxy.send_event(UserEvent::IpcEval(js));
+        }
+        "blocks" => {
+            // Source line extents of every top-level markdown block, for the
+            // editor's click-to-edit mapping. Line coordinates, not bytes —
+            // JS pages are UTF-16 and will do its own offset math.
+            let text = v.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+            let truncated = truncate_str(&text, MAX_MD_BYTES);
+            let spans = block_spans(truncated);
+            let json = serde_json::to_string(&spans).unwrap_or_else(|_| "[]".into());
+            let js = format!(
+                "window.__mdview_ipc_result && window.__mdview_ipc_result({}, true, {});",
+                serde_json::to_string(&id).unwrap_or("\"\"".into()),
+                json
             );
             let _ = proxy.send_event(UserEvent::IpcEval(js));
         }
@@ -2233,9 +2427,9 @@ mod tests {
 
     #[test]
     fn vendored_gzip_blobs_inflate() {
-        // Guards the build step that gzips vendor files (tools/vendor-assets.py):
-        // a corrupt or truncated blob must fail here, loudly, rather than
-        // silently at runtime as a blank page.
+        // Guards the build steps that gzip vendor files (tools/vendor-assets.py,
+        // tools/vendor-cm6.mjs): a corrupt or truncated blob must fail here, loudly,
+        // rather than silently at runtime as a blank page.
         for (name, gz) in [
             (
                 "hljs",
@@ -2253,6 +2447,10 @@ mod tests {
                 "mermaid",
                 &include_bytes!("../frontend/vendor/mermaid/mermaid.min.js.gz")[..],
             ),
+            (
+                "codemirror",
+                &include_bytes!("../frontend/vendor/codemirror.min.js.gz")[..],
+            ),
         ] {
             let out = gunzip(gz).unwrap_or_else(|| panic!("{name} failed to inflate"));
             assert!(out.len() > 1000, "{name} inflated to only {} bytes", out.len());
@@ -2265,6 +2463,7 @@ mod tests {
                 "katex.css" => "KaTeX",
                 "katex.js" => "katex",
                 "mermaid" => "mermaid",
+                "codemirror" => "MDViewCM",
                 other => panic!("unknown blob {other}"),
             };
             assert!(text.contains(marker), "{name} lacks {marker} marker");
@@ -2318,6 +2517,7 @@ mod tests {
         for (path, needle) in [
             ("katex/katex.min.js", "katex"),
             ("mermaid/mermaid.min.js", "mermaid"),
+            ("codemirror/codemirror.min.js", "CodeMirror"),
         ] {
             let uri = format!("http://mdview.localhost/asset/{path}");
             let r = serve_app_asset(&uri)
@@ -2484,6 +2684,158 @@ mod tests {
         assert!(!html.to_lowercase().contains("<script"));
         assert!(html.contains("https://x.io/u/r/main/img/"), "{}", html);
         assert!(html.contains("<video controls"));
+    }
+
+    /* ================= block spans (editor mapping) ================= */
+
+    const FULL_FIXTURE: &str = "---\ntitle: Test & \"front matter\"\n---\n\nSetext Heading\n======\n\n# ATX heading\n\nпараagraph with **bold** and $x^2$ math\n\n- item a\n  - nested b\n- item c\n\n> quoted text\n> more quote\n\n```rust\n# not a heading\n```\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\nFootnote text[^1]\n\n[^1]: the note\n\n<div class=\"x\">raw</div>\n\n***\n";
+
+    #[test]
+    fn block_spans_cover_every_block_type_in_order() {
+        let spans = block_spans(FULL_FIXTURE);
+        let got: Vec<&str> = spans.iter().map(|s| s.kind).collect();
+        assert_eq!(
+            got,
+            ["frontmatter", "heading", "heading", "paragraph", "list", "quote", "code", "table", "paragraph", "footnote", "html", "rule"],
+            "{:?}",
+            spans
+        );
+        // Indices are dense and spans are ordered and non-overlapping.
+        for (i, s) in spans.iter().enumerate() {
+            assert_eq!(s.index, i);
+        }
+        for w in spans.windows(2) {
+            assert!(w[0].end_line <= w[1].start_line, "overlapping: {:?} vs {:?}", w[0], w[1]);
+        }
+        // Every span's first line begins a block; no span starts on a blank line.
+        let lines: Vec<&str> = FULL_FIXTURE.split('\n').collect();
+        for s in &spans {
+            assert!(!lines[s.start_line].trim().is_empty(), "span starts on blank line: {:?}", s);
+        }
+        // Spot-check exact extents of known blocks.
+        let find = |k: &str, n: usize| spans.iter().filter(|s| s.kind == k).nth(n).unwrap();
+        assert_eq!((find("frontmatter", 0).start_line, find("frontmatter", 0).end_line), (0, 3));
+        assert_eq!((find("heading", 0).start_line, find("heading", 0).end_line), (4, 6)); // setext: text + underline
+        assert_eq!((find("heading", 1).start_line, find("heading", 1).end_line), (7, 8));
+        assert_eq!((find("list", 0).start_line, find("list", 0).end_line), (11, 14));
+        assert_eq!((find("code", 0).start_line, find("code", 0).end_line), (18, 21));
+        assert_eq!((find("footnote", 0).start_line, find("footnote", 0).end_line), (28, 29));
+        assert_eq!((find("rule", 0).start_line, find("rule", 0).end_line), (32, 33));
+    }
+
+    #[test]
+    fn block_spans_use_line_coordinates_not_byte_offsets() {
+        // Emoji and CJK must not shift the reported lines: a byte-counted
+        // mapping would drift by one line per astral character here.
+        let md = "# 🌍🌍🌍\n\n中文段落 with 🎵🎵🎵\n\n- 项目\n";
+        let spans = block_spans(md);
+        let kinds: Vec<&str> = spans.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, ["heading", "paragraph", "list"]);
+        assert_eq!((spans[0].start_line, spans[0].end_line), (0, 1));
+        assert_eq!((spans[1].start_line, spans[1].end_line), (2, 3));
+        assert_eq!((spans[2].start_line, spans[2].end_line), (4, 5));
+    }
+
+    #[test]
+    fn block_spans_handle_crlf_documents() {
+        let md = "# hi\r\n\r\npara one\r\n\r\n- a\r\n- b\r\n";
+        let spans = block_spans(md);
+        let kinds: Vec<&str> = spans.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, ["heading", "paragraph", "list"]);
+        assert_eq!((spans[0].start_line, spans[0].end_line), (0, 1));
+        assert_eq!((spans[1].start_line, spans[1].end_line), (2, 3));
+        assert_eq!((spans[2].start_line, spans[2].end_line), (4, 6));
+    }
+
+    #[test]
+    fn block_spans_fenced_code_with_markdown_looking_content() {
+        let md = "```\n# not a heading\n\n- not a list\n```\n\nreal paragraph\n";
+        let spans = block_spans(md);
+        assert_eq!(spans.iter().map(|s| s.kind).collect::<Vec<_>>(), ["code", "paragraph"]);
+        assert_eq!((spans[0].start_line, spans[0].end_line), (0, 5));
+        assert_eq!((spans[1].start_line, spans[1].end_line), (6, 7));
+    }
+
+    #[test]
+    fn block_spans_mermaid_and_math_blocks() {
+        let md = "```mermaid\ngraph TD\n  A-->B\n```\n\n$$\nx = 1\n$$\n\ntext $y = 2$ after\n";
+        let spans = block_spans(md);
+        // Mermaid fence is a code block; pulldown emits display math as a
+        // paragraph wrapping an inline DisplayMath leaf — so the math paragraph
+        // IS the editable block (raw $$...$$ source visible in the cell).
+        let kinds: Vec<&str> = spans.iter().map(|s| s.kind).collect();
+        assert_eq!(kinds, ["code", "paragraph", "paragraph"], "{:?}", spans);
+        assert_eq!((spans[1].start_line, spans[1].end_line), (5, 8));
+        assert_eq!((spans[2].start_line, spans[2].end_line), (9, 10));
+    }
+
+    #[test]
+    fn script_only_block_renders_as_empty_wrapper_not_nothing() {
+        // Every markdown block must produce a .md-block wrapper or the editor
+        // mapping drifts for all subsequent blocks.
+        let md = "# hi\n\n<script>alert(1)</script>\n\npara\n";
+        let html = render_markdown_to_html(md, None);
+        assert_eq!(html.matches("<div class=\"md-block\"").count(), 3, "{html}");
+        assert!(!html.to_lowercase().contains("<script"), "{html}");
+        let spans = block_spans(md);
+        assert_eq!(spans.iter().map(|s| s.kind).collect::<Vec<_>>(), ["heading", "html", "paragraph"]);
+    }
+
+    #[test]
+    fn rendered_wrappers_are_dense_and_match_span_count() {
+        for doc in [
+            FULL_FIXTURE,
+            "# a\n\npara\n",
+            "<script>x</script>\n",
+            "---\nyaml: true\n---\n",
+            "***\n",
+            "",
+        ] {
+            let html = render_markdown_to_html(doc, None);
+            let spans = block_spans(doc);
+            let wrappers = html.matches("<div class=\"md-block\"").count();
+            assert_eq!(wrappers, spans.len(), "doc {:?}: html {} vs spans {:?}", doc, wrappers, spans);
+            for i in 0..wrappers {
+                assert!(html.contains(&format!("data-blk=\"{}\"", i)), "missing data-blk {i} in {html}");
+            }
+        }
+    }
+
+    #[test]
+    fn tables_render_inside_their_block_wrapper() {
+        let html = render_markdown_to_html("| a | b |\n|--- | --- |\n| 1 | 2 |\n", None);
+        let wrapper_at = html.find("<div class=\"md-block\"").expect("wrapper");
+        let tw_at = html.find("<div class=\"tw\">").expect("tw wrapper");
+        assert!(wrapper_at < tw_at, "md-block must enclose the table's .tw: {html}");
+        assert!(html.matches("<div class=\"md-block\"").count() == 1, "{html}");
+    }
+
+    #[test]
+    fn splicing_block_by_line_extents_round_trips() {
+        // The exact operation the editor performs: replace the characters of
+        // one block's lines with new source, leave everything else byte-identical.
+        for doc in [FULL_FIXTURE.to_string(), "# 🌍 x\n\n中文 para\n".to_string(), "a\n\nb\n\nc\n".to_string()] {
+            let spans = block_spans(&doc);
+            // Build line start char offsets (char-based, like the JS side).
+            let mut line_starts = vec![0usize];
+            for (i, ch) in doc.char_indices() {
+                if ch == '\n' { line_starts.push(i + 1); }
+            }
+            let end_of_doc = doc.char_indices().map(|(i, _)| i).last().map(|i| i + 1).unwrap_or(0);
+            let char_end = end_of_doc;
+            let block_text = |s: &BlockSpan| -> String {
+                let st = line_starts[s.start_line];
+                let en = if s.end_line < line_starts.len() { line_starts[s.end_line] } else { char_end };
+                doc[st..en].to_string()
+            };
+            for (i, s) in spans.iter().enumerate() {
+                let block = block_text(s);
+                assert!(doc.contains(&block), "block {i} slice not found");
+                let edited = format!("EDITED {}\n", i);
+                let new_doc = doc.replacen(&block, &edited, 1);
+                assert!(new_doc.contains(&edited), "splice broke block {i}");
+            }
+        }
     }
 
     #[test]

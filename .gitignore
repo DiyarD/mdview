@@ -20,3 +20,6 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Scratch dir for the CodeMirror bundle build (tools/vendor-cm6.mjs)
+/tools/.cm-build/
