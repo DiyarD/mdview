@@ -1,8 +1,8 @@
 const fs = require("fs");
 const { execSync } = require("child_process");
 const src = fs.readFileSync("frontend/index.html", "utf8");
-// Extract the main inline script (the one with "use strict").
-const m = src.match(/<script>\n"use strict";([\s\S]*?)<\/script>/);
+// Extract the main inline script (the one with "use strict"). CRLF-tolerant.
+const m = src.match(/<script>\r?\n"use strict";([\s\S]*?)<\/script>/);
 if (!m) { console.error("main script not found"); process.exit(1); }
 fs.writeFileSync("C:\\Users\\TOTALT~1\\AppData\\Local\\Temp\\opencode\\mdview-main.js", '"use strict";' + m[1]);
 try {

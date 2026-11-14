@@ -233,6 +233,58 @@
   .similar>span{ flex:1; min-width:200px; color:var(--quote); }
   .similar b{ color:var(--fg); font-weight:600; }
   .similar .btn{ padding:6px 12px; font-size:12.5px; }
+  /* Editing: each markdown block is wrapped in a boxless .md-block carrying
+     its source index; the wrapper disappears entirely (display:contents). */
+  .md-block{ display:contents; }
+  /* Keep the old >*:first/last margin collapse now that blocks are wrapped. */
+  .markdown-body>.md-block:first-child>:first-child{ margin-top:0 !important; }
+  .markdown-body>.md-block:last-child>:last-child{ margin-bottom:0 !important; }
+  .md-block-hidden{ display:none !important; }
+  body.editing .markdown-body .md-block{ cursor:text; }
+  body.editing .markdown-body .md-block:hover>*{ outline:1.5px dashed var(--accent); outline-offset:3px; border-radius:4px; }
+  #editBtn[aria-pressed="true"]{ color:var(--accent); background:var(--accent-soft); border-color:var(--accent); }
+  #editBtn:disabled{ opacity:.35; cursor:default; }
+  /* The cell: a calm paper card with a hairline bar, CodeMirror inside. */
+  .md-cell{ display:block; margin:0 0 1.05em; border:1px solid var(--border);
+    border-radius:12px; background:var(--card); overflow:hidden;
+    outline:2px solid var(--accent); outline-offset:1px; box-shadow:var(--shadow); }
+  .cell-bar{ display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:3px 12px; border-bottom:1px solid var(--border); background:var(--pre-bg);
+    font:600 10.5px/1.6 var(--sans); letter-spacing:.08em; text-transform:uppercase; color:var(--quote); }
+  .cell-bar .cell-hint{ font-weight:400; letter-spacing:0; text-transform:none; font-size:11px; }
+  .cell-bar kbd{ font:10px var(--mono); border:1px solid var(--border); border-bottom-width:2px; border-radius:4px; padding:0 4px; margin:0 1px; }
+  .md-cell .cm-editor{ background:transparent; font-size:13px; }
+  .md-cell .cm-scroller{ min-height:2.4em; }
+  .md-cell .cm-content{ font-family:var(--mono); padding:10px 12px; caret-color:var(--accent); line-height:1.6; }
+  .md-cell .cm-focused,.srcview .cm-focused{ outline:none !important; }
+  .md-cell .cm-line,.srcview .cm-line{ padding:0; }
+  /* Whole-document source view (Ctrl+Shift+E): a full-height editing layer over
+     everything, Esc or Ctrl+Shift+E applies. */
+  .srcview{ position:fixed; inset:var(--bar-h) 0 0 0; z-index:150; display:flex; flex-direction:column;
+    background:var(--bg); }
+  .srcview-bar{ display:flex; align-items:center; gap:12px; padding:8px 16px;
+    border-bottom:1px solid var(--border); background:var(--bar); font:12.5px var(--sans); color:var(--quote); }
+  .srcview-bar b{ color:var(--fg); font-weight:600; }
+  .srcview-bar kbd{ font:10.5px var(--mono); border:1px solid var(--border); border-bottom-width:2px; border-radius:4px; padding:0 5px; }
+  .srcview-body{ flex:1; min-height:0; overflow:auto; }
+  .srcview .cm-editor{ height:100%; background:var(--card); }
+  .srcview .cm-scroller{ height:100%; }
+  .srcview .cm-content{ font-family:var(--mono); padding:14px 20px; caret-color:var(--accent); line-height:1.6; }
+  /* The edited-copy notice: a whisper, not a modal. Same family as .similar. */
+  .copy-notice{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    margin:0 0 18px; padding:11px 14px; border:1px solid var(--border);
+    border-radius:10px; background:var(--card); box-shadow:var(--shadow);
+    font:13px/1.45 var(--sans); color:var(--quote); }
+  .copy-notice b{ color:var(--fg); font-weight:600; }
+  /* Close-tab confirmation: one purpose, three plain buttons. */
+  .confirm{ position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center;
+    background:rgba(20,16,12,.45); backdrop-filter:blur(3px); }
+  #confirmSave[hidden]{ display:none !important; }
+  .confirm-box{ width:min(430px,90vw); border:1px solid var(--border); border-radius:14px;
+    background:var(--card); box-shadow:var(--shadow); padding:18px; font:13.5px/1.5 var(--sans); }
+  .confirm-box h2{ font-family:var(--serif); font-size:16px; margin:0 0 6px; font-weight:600; }
+  .confirm-box p{ color:var(--quote); margin:0 0 14px; font-size:13px; }
+  .confirm-row{ display:flex; justify-content:flex-end; gap:8px; }
   /* Saved documents on the welcome screen. */
   .saved-docs{ margin-top:26px; padding-top:22px; border-top:1px solid var(--border); text-align:left; }
   .saved-head{ display:flex; align-items:center; justify-content:space-between; gap:12px;
@@ -361,6 +413,7 @@
     html{ background:var(--bg); }
     body{ overflow:visible; background:var(--bg); }
     #bar,#toc{ display:none !important; }
+    .md-cell,.srcview,.copy-notice{ display:none !important; }
     #views{ height:auto; }
     .view{ position:static; overflow:visible; }
     /* The reading margins live in @page now, so .page contributes none —
@@ -506,6 +559,7 @@
   <button class="ctl" id="save" title="Save document (Ctrl+S)" aria-pressed="false" aria-label="Save document"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5A1.5 1.5 0 0 1 5.5 3h7.4L17 7.1V15a1.5 1.5 0 0 1-1.5 1.5h-10A1.5 1.5 0 0 1 4 15Z"/><path d="M7 3v6h6V3M7.5 13h5"/></svg></button>
   <input id="width" type="range" min="620" max="1180" step="10" value="860" title="Reading width — also [ / ] or Alt+Left/Right">
   <button class="ctl" id="annToggle" title="Highlights and notes (Ctrl+Shift+A)" aria-pressed="false" aria-label="Highlights and notes"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 13.1 9.2 7.3l3.5 3.5-5.8 5.8H3.4z"/><path d="M9.2 7.3 13.1 3.4a1.55 1.55 0 0 1 2.2 0l1.3 1.3a1.55 1.55 0 0 1 0 2.2l-3.9 3.9"/><path d="M2.6 17.6h6.5"/></svg> <span id="annCount" aria-hidden="true"></span></button>
+  <button class="ctl" id="editBtn" title="Edit document (Ctrl+E)" aria-pressed="false" aria-label="Edit document" disabled><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.2 16.8h4.4l9.6-9.6a2.2 2.2 0 0 0-3.1-3.1l-9.6 9.6z"/><path d="M11.6 6.7l3.2 3.2"/></svg></button>
   <button class="ctl" id="theme" title="Toggle light/dark">◐</button>
 </div>
 <div id="views"></div>
@@ -521,6 +575,17 @@
   <div class="ann-list" id="annList"></div>
 </aside>
 <div id="annEditor" hidden role="dialog" aria-modal="false" aria-label="Edit highlight"></div>
+<div id="confirmSave" class="confirm" hidden role="alertdialog" aria-modal="true" aria-labelledby="confirmSaveTitle" aria-describedby="confirmSaveDesc">
+  <div class="confirm-box">
+    <h2 id="confirmSaveTitle">Unsaved editing?</h2>
+    <p id="confirmSaveDesc">You left text mid-edit. It isn’t in the document yet — save it, or discard it and close.</p>
+    <div class="confirm-row">
+      <button class="btn" id="confirmCancel" type="button">Cancel</button>
+      <button class="btn" id="confirmDiscard" type="button">Discard</button>
+      <button class="btn primary" id="confirmApply" type="button">Save &amp; close</button>
+    </div>
+  </div>
+</div>
 <div id="toc" hidden>
   <div id="tocBox">
     <button class="dock l" id="tocLeft" aria-label="Move contents pill left"><svg viewBox="0 0 8 12" aria-hidden="true"><path d="M7 1.5 2.5 6 7 10.5"/></svg></button>
@@ -695,6 +760,7 @@ function updateActiveTabClass(){
   });
 }
 function switchTab(id){
+  if(activeCell) void commitCell("blur"); // never strand a live editor across tabs
   activeId = id;
   document.querySelectorAll(".view").forEach(v=>v.classList.toggle("active", v.id==="view-"+id));
   const t = tabs.find(x=>x.id===id);
@@ -708,7 +774,7 @@ function switchTab(id){
   annRenderPanelList();
   annRenderMarkers();
 }
-function closeTab(id){
+function actuallyCloseTab(id){
   tabs = tabs.filter(t=>t.id!==id);
   const v = document.getElementById("view-"+id); if(v) v.remove();
   annForgetTab(id);
@@ -720,6 +786,31 @@ function closeTab(id){
   paintTabs();
   maybeReleaseAssets();
 }
+// Closing a tab with a live editor mid-sentence must never happen silently:
+// commit what the user typed, or tear it down by explicit choice.
+function closeTab(id){
+  const t = tabs.find(x=>x.id===id);
+  const cellDirty = !!(activeCell && t && activeCell.tab === t && activeCell.view.state.sliceDoc() !== activeCell.orig);
+  const srcDirty = !!(sourceView && t && sourceView.tab === t && sourceView.view.state.sliceDoc() !== sourceView.orig);
+  if(!cellDirty && !srcDirty){ actuallyCloseTab(id); return; }
+  void askConfirm().then(choice => {
+    if(choice === "cancel") return;
+    if(choice === "apply"){
+      // 'apply' runs synchronously through the splice, so the store has the
+      // text before the tab dies; auto-save flushes with immediate=true.
+      if(cellDirty) void commitCell("blur");
+      if(srcDirty) closeSourceView(true);
+    } else {
+      if(cellDirty && activeCell){
+        const c = activeCell; activeCell = null;
+        const blk = c.blkEl; c.view.destroy(); c.cell.remove();
+        if(blk) blk.classList.remove("md-block-hidden");
+      }
+      if(srcDirty) closeSourceView(false);
+    }
+    actuallyCloseTab(id);
+  });
+}
 // Once no open tab still needs the inflated KaTeX/mermaid bundle, ask Rust to
 // drop it — a reading session that has left math and diagrams behind returns
 // to its near-idle footprint instead of holding ~2.5MB for the rest of the day.
@@ -729,7 +820,7 @@ function maybeReleaseAssets(){
   const stillNeeded = tabs.some(t=>{
     const v = document.getElementById("view-"+t.id);
     return v && (v.querySelector(".katex") || v.querySelector(".mermaid svg"));
-  });
+  }) || editMode || !!document.querySelector(".md-cell") || !!sourceView;
   if(!stillNeeded) rust("release_asset").catch(()=>{});
 }
 function cur(){ return tabs.find(t=>t.id===activeId); }
@@ -778,6 +869,7 @@ function updateWindowTitle(){
   if(useIpc()) rust("set_title", { title }).catch(()=>{});
 }
 async function saveCurrent(){
+  if(activeCell) commitCell("stay"); // Ctrl+S must see what the user just typed
   const t = cur(); if(!t || !t.md) return;
   if(!useIpc()){ showErr(t, "Saving needs the mdview app."); return; }
   try{
@@ -1659,6 +1751,9 @@ async function annDeleteEditorRow(){
 }
 // Caret position -> flat offset, used for click-to-edit on painted highlights.
 function annHitAt(t, x, y){
+  // Edit mode is a hard wall between the two gesture systems: no hit-testing,
+  // no highlight opening, ever, while the editor is up.
+  if(editMode) return null;
   const state = annState.get(t.id);
   if(!state || !state.flat || !state.resolved.size) return null;
   const view = document.getElementById("view-" + t.id);
@@ -1722,13 +1817,15 @@ function annWireEvents(){
   // selection collapses, so it catches every other click).
   document.addEventListener("pointerdown", e => {
     const btn = $("#annPropose");
-    if(btn && !btn.hidden && !(e.target === btn || (e.target.closest && e.target.closest("#annPropose")))){
+    if(btn && !btn.hidden && !(e.target === btn || (e.target.closest && e.target.closest("#annPropose")))
+       && !(e.target.closest && (e.target.closest(".md-cell") || e.target.closest(".srcview")))){
       hideAnnPropose();
     }
   }, true);
   document.addEventListener("pointerup", e => {
     if(e.button !== 0) return;
-    if(e.target.closest && e.target.closest("#annPanel, #annEditor, #annPropose, #bar")) return;
+    if(e.target.closest && e.target.closest("#annPanel, #annEditor, #annPropose, #bar, .md-cell, .srcview")) return;
+    if(editMode) return;
     if(!useIpc()) return;
     const t = cur();
     if(!t || !t.rendered) return;
@@ -1754,7 +1851,9 @@ function annWireEvents(){
     const inEditor = editor && editor.contains(e.target);
     const inPanel = e.target.closest && e.target.closest("#annPanel");
     const inPropose = e.target.closest && e.target.closest("#annPropose");
-    if(inEditor || inPanel || inPropose) return;
+    const inCell = e.target.closest && (e.target.closest(".md-cell") || e.target.closest(".srcview"));
+    if(inEditor || inPanel || inPropose || inCell) return;
+    if(editMode) return; // edit blocks handle their own clicks; highlights are inert
     // A click that ends a selection drag is a new highlight opportunity, not
     // an intent to edit the one underneath — only the proposal button shows.
     // (A plain click collapses the selection, so this only suppresses the
@@ -1770,6 +1869,8 @@ function annWireEvents(){
     if(editor && !editor.hidden) annCloseEditor();
   });
   document.addEventListener("keydown", e => {
+    // The cell editor owns Escape while it is open; the highlight system stays out.
+    if(activeCell || sourceView) return;
     if(e.key === "Escape"){
       const editor = $("#annEditor");
       if(editor && !editor.hidden){ e.preventDefault(); annCloseEditor(); return; }
@@ -2001,6 +2102,12 @@ document.addEventListener("drop", async e=>{
       files = Array.from(dt.files||[]);
     }
   }catch(err){}
+  // Over an editing surface: a drop with no files is a text rearrangement
+  // inside the editor — it must never summon a new tab (an https:// string,
+  // a path, a URL fragment would all qualify). Files still open as tabs, as
+  // they do everywhere else in the app.
+  const overEditor = e.target && e.target.closest && e.target.closest(".md-cell, .srcview");
+  if(overEditor && !files.length) return;
   const leak = useIpc() && (pickDocFromUriList(uri) || pickDocFromUriList(plain));
   if(leak){
     try{
@@ -2012,7 +2119,340 @@ document.addEventListener("drop", async e=>{
   if(files.length) await ingestFiles(t, files);
 });
 
+/* ---------- editing ---------- */
+// Editing is modal and per window: edit mode (Ctrl+E) makes every rendered
+// markdown block click-to-edit. A block's raw source opens in an embedded
+// CodeMirror cell; committing splices it back into t.md, re-renders the
+// document and flushes the auto-save through the same path annotations use.
+// Undo is two-tier: in-cell CodeMirror history (time+range grouped, 500 ms
+// window) and a patch-splice document stack (offset + removed + inserted, a
+// few bytes per step, capped at 200) — never whole-document snapshots.
+//
+// Click-to-edit wraps the rendered block, never the markdown-body children
+// directly: renderTab pairs each top-level .md-block wrapper (data-blk) with
+// the block spans reported by Rust, in the same order, from the same parse.
+let editMode = false;
+let activeCell = null;   // { tab, index, blkEl, cell, view, start, end, orig, isInsert }
+let sourceView = null;   // { tab, overlay, view, orig }
+let cmLoadPromise = null;
+const DOC_UNDO_MAX = 200;
+// Function declarations hoist, but `let` does not: tabUndo must not be used
+// before its declaration is evaluated. All runtime calls happen after boot.
+function tabUndo(t){
+  if(!t.undoStack){ t.undoStack = []; t.redoStack = []; }
+  return t;
+}
+function cmAvailable(){ return !!window.MDViewCM; }
+function ensureCM(){
+  if(cmAvailable()) return Promise.resolve(true);
+  if(cmLoadPromise) return cmLoadPromise;
+  cmLoadPromise = loadScript(MDVIEW_ASSET + "codemirror/codemirror.min.js")
+    .then(() => !!window.MDViewCM)
+    .catch(e => { console.warn("mdview: codemirror failed to load", e); return false; });
+  return cmLoadPromise;
+}
+function mdLineStarts(md){
+  const starts = [0];
+  for(let i = 0; i < md.length; i++){ if(md.charCodeAt(i) === 10) starts.push(i + 1); }
+  return starts;
+}
+// Char range [start, end) of a line span within md. JS is UTF-16; Rust sent
+// line numbers, so the two never have to agree on byte or code-point widths.
+function blockCharRange(md, starts, span){
+  const s = starts[span.start_line];
+  const e = span.end_line < starts.length ? starts[span.end_line] : md.length;
+  return [s, e];
+}
+function spliceDoc(t, offset, removedLen, inserted){
+  t.md = t.md.slice(0, offset) + inserted + t.md.slice(offset + removedLen);
+}
+// Commit points shared by every editing surface.
+function cellKeymap(){
+  return [
+    { key: "Shift-Enter", run: () => { commitCell("next"); return true; } },
+    { key: "Mod-Enter", run: () => { commitCell("stay"); return true; } },
+    { key: "Alt-Enter", run: () => { commitCell("insert"); return true; } },
+    { key: "Escape", run: () => { commitCell("blur"); return true; } },
+  ];
+}
+function cmExtensions(CM, extraKeys, lineSeparator){
+  const base = [
+    CM.EditorView.lineWrapping,
+    CM.markdown(),
+    CM.syntaxHighlighting(CM.defaultHighlightStyle, { fallback: true }),
+    CM.history({ newGroupDelay: 500, minDepth: 100 }),
+    CM.keymap.of([...(extraKeys || []), ...CM.historyKeymap, ...CM.defaultKeymap, CM.indentWithTab]),
+    CM.EditorView.theme({
+      "&": { fontSize: "13px" },
+      ".cm-content": { fontFamily: "var(--mono)", caretColor: "var(--accent)" },
+      "&.cm-focused": { outline: "none" },
+    }),
+  ];
+  // Never silently rewrite line endings: a CRLF document edited in the cell
+  // must splice back exactly what it contained.
+  if(lineSeparator) base.push(CM.EditorState.lineSeparator.of(lineSeparator));
+  return base;
+}
+// CRLF if present, CR-only if that's all there is, else default (LF).
+function lineSepOf(md){ return md.includes("\r\n") ? "\r\n" : (/\r/.test(md) ? "\r" : "\n"); }
+function updateEditButton(){
+  const b = $("#editBtn"); if(!b) return;
+  const t = cur();
+  const ok = !!(t && t.rendered && t.md);
+  b.disabled = !ok;
+  b.setAttribute("aria-pressed", editMode ? "true" : "false");
+  b.title = editMode ? "Exit edit mode (Ctrl+E)" : "Edit document (Ctrl+E)";
+}
+function setEditMode(on){
+  const t = cur();
+  if(on){
+    if(!useIpc()){ showErr(t || { id: 0 }, "Editing needs the mdview app itself (external renderer unavailable)."); return; }
+    if(!t || !t.rendered || !t.md){ showErr(t || { id: 0 }, "Nothing to edit yet — open or paste a document first."); return; }
+    if(editMode) return;
+    void ensureCM().then(ok => {
+      const t2 = cur();
+      if(!ok){ showErr(t2, "The editing component could not be loaded — edit mode stayed off."); return; }
+      editMode = true;
+      document.body.classList.add("editing");
+      annCloseEditor();           // one interaction mode at a time, visibly
+      hideAnnPropose();
+      updateEditButton();
+    });
+    return;
+  }
+  editMode = false;
+  document.body.classList.remove("editing");
+  updateEditButton();
+  if(activeCell) void commitCell("blur");
+  if(sourceView) closeSourceView(false);
+  maybeReleaseAssets();
+  if(useIpc()) rust("release_asset").catch(() => {});
+}
+async function focusBlock(index){
+  const t = cur(); if(!t || !editMode) return;
+  if(activeCell) await commitCell("blur");
+  openBlockByIndex(t, index);
+}
+document.addEventListener("click", e => {
+  if(!editMode || sourceView) return;
+  const t = cur(); if(!t || !t.rendered) return;
+  // Synthetic events dispatch on document, and scrollbar clicks do too — the
+  // click *point* is the source of truth, not the target node.
+  let target = e.target;
+  if(!(target instanceof Element)) target = document.elementFromPoint(e.clientX, e.clientY);
+  if(!target){ if(activeCell) void commitCell("blur"); return; }
+  if(target.closest("#annPanel, #annEditor, #annPropose, #bar, .confirm, #toc, #newtab")) return;
+  if(target.closest(".md-cell")) return; // the editor handles its own clicks
+  const blk = target.closest(".md-block[data-blk]");
+  if(!blk){ if(activeCell) void commitCell("blur"); return; }
+  e.preventDefault(); e.stopPropagation();
+  void focusBlock(+blk.getAttribute("data-blk"));
+}, false);
+function openBlockByIndex(t, index){
+  const v = document.getElementById("view-" + t.id); if(!v) return;
+  const span = t.blocks && t.blocks[index]; if(!span) return;
+  const blkEl = v.querySelector('.md-block[data-blk="' + index + '"]'); if(!blkEl) return;
+  const starts = mdLineStarts(t.md);
+  const [start, end] = blockCharRange(t.md, starts, span);
+  const src = t.md.slice(start, end);
+  const cell = document.createElement("div");
+  cell.className = "md-cell";
+  cell.innerHTML = '<div class="cell-bar"><span>' + esc(span.kind || "block") + ' · editing source</span>'
+    + '<span class="cell-hint"><kbd>Shift</kbd>+<kbd>Enter</kbd> next · <kbd>Alt</kbd>+<kbd>Enter</kbd> insert below · <kbd>Esc</kbd> apply</span></div>';
+  const host = document.createElement("div");
+  cell.appendChild(host);
+  blkEl.classList.add("md-block-hidden");
+  blkEl.after(cell);
+  const CM = window.MDViewCM;
+  const state = CM.EditorState.create({ doc: src, extensions: cmExtensions(CM, cellKeymap(), lineSepOf(src)) });
+  const view = new CM.EditorView({ state, parent: host });
+  activeCell = { tab: t, index, blkEl, cell, view, start, end, orig: src, isInsert: false };
+  view.focus();
+}
+function openInsertCell(t, afterIndex){
+  const v = document.getElementById("view-" + t.id); if(!v) return;
+  const span = t.blocks && t.blocks[afterIndex];
+  const starts = mdLineStarts(t.md);
+  const insertAt = span ? blockCharRange(t.md, starts, span)[1] : t.md.length;
+  const cell = document.createElement("div");
+  cell.className = "md-cell md-cell-insert";
+  cell.innerHTML = '<div class="cell-bar"><span>new paragraph</span>'
+    + '<span class="cell-hint"><kbd>Shift</kbd>+<kbd>Enter</kbd> create · <kbd>Esc</kbd> apply &amp; close</span></div>';
+  const host = document.createElement("div");
+  cell.appendChild(host);
+  const blkEl = v.querySelector('.md-block[data-blk="' + afterIndex + '"]');
+  if(blkEl) blkEl.after(cell); else { const article = v.querySelector(".markdown-body"); if(article) article.appendChild(cell); }
+  const CM = window.MDViewCM;
+  const state = CM.EditorState.create({ doc: "", extensions: cmExtensions(CM, cellKeymap(), lineSepOf(t.md)) });
+  const view = new CM.EditorView({ state, parent: host });
+  activeCell = { tab: t, index: afterIndex + 1, blkEl: null, cell, view, start: insertAt, end: insertAt, orig: "", isInsert: true };
+  view.focus();
+}
+async function commitCell(reason){
+  const c = activeCell; if(!c) return null;
+  const t = c.tab;
+  let src = c.view.state.sliceDoc(); // line-separator aware; doc.toString() normalizes to \n
+  if(c.isInsert && (reason === "next" || reason === "insert")) reason = "blur";
+  if(sourceView) return null; // source view owns the tab; never two writers
+  const changed = c.isInsert ? src.trim().length > 0 : src !== c.orig;
+  if(changed){
+    const u = tabUndo(t);
+    if(c.isInsert){
+      const sep = lineSepOf(t.md);
+      const body = src.replace(/^[\r\n]+|[\r\n]+$/g, "");
+      const chunk = sep + body + sep;
+      u.undoStack.push({ offset: c.start, removed: "", inserted: chunk });
+      if(u.undoStack.length > DOC_UNDO_MAX) u.undoStack.shift();
+      u.redoStack.length = 0;
+      spliceDoc(t, c.start, 0, chunk);
+    } else {
+      const removed = t.md.slice(c.start, c.end);
+      u.undoStack.push({ offset: c.start, removed, inserted: src });
+      if(u.undoStack.length > DOC_UNDO_MAX) u.undoStack.shift();
+      u.redoStack.length = 0;
+      spliceDoc(t, c.start, c.end - c.start, src);
+    }
+    t.dirty = true;
+    t.edited = true;
+    void mdviewAutoSaveDocument(t, true); // same door annotations use
+    noteCopyOnFirstEdit(t);
+  }
+  if(reason === "stay"){ c.orig = src; c.end = c.start + src.length; return t; }
+  const keepIndex = c.index;
+  const blkEl = c.blkEl;
+  // Tear the cell down BEFORE the re-render so no handler sees a half-torn view.
+  c.view.destroy(); c.cell.remove(); activeCell = null;
+  if(blkEl) blkEl.classList.remove("md-block-hidden");
+  if(changed) await renderTab(t, true);
+  if(reason === "next") openBlockByIndex(t, keepIndex + 1);
+  else if(reason === "insert") openInsertCell(t, keepIndex);
+  return t;
+}
+/* document-level patch undo: one committed edit = one Ctrl+Z step */
+function docUndo(){
+  const t = cur(); if(!t || !t.md) return;
+  const u = tabUndo(t);
+  const entry = u.undoStack.pop();
+  if(!entry) return;
+  const at = t.md.slice(entry.offset, entry.offset + entry.inserted.length);
+  if(at !== entry.inserted){
+    // The doc drifted since this splice (reload, splice bug). Refuse to guess.
+    u.undoStack.push(entry);
+    showErr(t, "Undo refused: the document changed since that edit.");
+    return;
+  }
+  t.md = t.md.slice(0, entry.offset) + entry.removed + t.md.slice(entry.offset + entry.inserted.length);
+  u.redoStack.push({ offset: entry.offset, removed: entry.inserted, inserted: entry.removed });
+  t.dirty = true; t.edited = true;
+  void mdviewAutoSaveDocument(t, true);
+  void renderTab(t, true);
+}
+function docRedo(){
+  const t = cur(); if(!t || !t.md) return;
+  const u = tabUndo(t);
+  const entry = u.redoStack.pop();
+  if(!entry) return;
+  const at = t.md.slice(entry.offset, entry.offset + entry.removed.length);
+  if(at !== entry.removed){
+    u.redoStack.push(entry);
+    showErr(t, "Redo refused: the document changed since that edit.");
+    return;
+  }
+  t.md = t.md.slice(0, entry.offset) + entry.inserted + t.md.slice(entry.offset + entry.removed.length);
+  u.undoStack.push({ offset: entry.offset, removed: entry.inserted, inserted: entry.removed });
+  t.dirty = true; t.edited = true;
+  void mdviewAutoSaveDocument(t, true);
+  void renderTab(t, true);
+}
+/* Whole-document source view (Ctrl+Shift+E): the multi-element escape hatch. */
+async function toggleSourceView(){
+  if(sourceView){ closeSourceView(true); return; }
+  const t = cur();
+  if(!t || !t.rendered || !t.md){ showErr(t || { id: 0 }, "Nothing to edit yet."); return; }
+  const ok = await ensureCM();
+  if(!ok){ showErr(t, "The editing component could not be loaded — source view unavailable."); return; }
+  if(editMode) setEditMode(false);
+  if(activeCell) void commitCell("blur");
+  const overlay = document.createElement("div");
+  overlay.className = "srcview";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-label", "Source editor for " + t.name);
+  overlay.innerHTML = '<div class="srcview-bar"><span>Editing <b>' + esc(t.name) + '</b> as raw markdown</span>'
+    + '<span style="margin-left:auto"><kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> to apply</span></div>';
+  const body = document.createElement("div");
+  body.className = "srcview-body";
+  overlay.appendChild(body);
+  document.body.appendChild(overlay);
+  const CM = window.MDViewCM;
+  const orig = t.md;
+  const keys = [
+    { key: "Escape", run: () => { closeSourceView(true); return true; } },
+    { key: "Shift-Mod-e", run: () => { closeSourceView(true); return true; } },
+  ];
+  const state = CM.EditorState.create({ doc: t.md, extensions: cmExtensions(CM, keys, lineSepOf(t.md)) });
+  const view = new CM.EditorView({ state, parent: body });
+  sourceView = { tab: t, overlay, view, orig };
+  view.focus();
+}
+function closeSourceView(apply){
+  const sv = sourceView; if(!sv) return;
+  const t = sv.tab;
+  const src = sv.view.state.sliceDoc();
+  sourceView = null;
+  sv.view.destroy(); sv.overlay.remove();
+  const changed = src !== sv.orig;
+  // No doc-level undo here: the view's own history died with it, and one
+  // whole-document snapshot per edit would be the memory trap we avoid.
+  if(apply && changed && tabs.includes(t)){
+    t.md = src; t.dirty = true; t.edited = true;
+    void mdviewAutoSaveDocument(t, true);
+    noteCopyOnFirstEdit(t);
+    void renderTab(t, true);
+  }
+}
+function noteCopyOnFirstEdit(t){
+  if(t.copyNoticeShown) return;
+  const kind = t.sourceKind;
+  if(kind !== "file" && kind !== "url") return;
+  t.copyNoticeShown = true;
+  const v = document.getElementById("view-" + t.id); if(!v) return;
+  if(v.querySelector(".copy-notice")) return;
+  const what = kind === "file" ? "the original file on disk" : "the original web page";
+  const box = document.createElement("div");
+  box.className = "copy-notice";
+  box.innerHTML = '<span>You’re editing a <b>copy stored in mdview’s database</b> — ' + what + ' is unchanged. Your edits stay inside the app.</span>';
+  const ok = document.createElement("button");
+  ok.type = "button"; ok.className = "btn"; ok.textContent = "Got it";
+  ok.onclick = () => box.remove();
+  box.appendChild(ok);
+  const page = v.querySelector(".page"); if(page) page.prepend(box);
+}
+function askConfirm(){
+  return new Promise(resolve => {
+    const modal = $("#confirmSave");
+    if(!modal){ resolve("cancel"); return; }   // markup missing: refuse to lose data silently
+    const done = choice => {
+      modal.hidden = true;
+      document.removeEventListener("keydown", onKey, true);
+      modal.removeEventListener("pointerdown", onBackdrop, true);
+      $("#confirmCancel").onclick = null; $("#confirmDiscard").onclick = null; $("#confirmApply").onclick = null;
+      resolve(choice);
+    };
+    const onKey = e => { if(e.key === "Escape"){ e.stopPropagation(); e.preventDefault(); done("cancel"); } };
+    const onBackdrop = e => { if(e.target === modal) done("cancel"); };
+    $("#confirmCancel").onclick = () => done("cancel");
+    $("#confirmDiscard").onclick = () => done("discard");
+    $("#confirmApply").onclick = () => done("apply");
+    document.addEventListener("keydown", onKey, true);
+    modal.addEventListener("pointerdown", onBackdrop, true);
+    modal.hidden = false;
+    $("#confirmApply").focus();
+  });
+}
+$("#editBtn").onclick = () => setEditMode(!editMode);
+
 /* ---------- rendering ---------- */
+
 function setMarkdown(t, md, name, base, source){
   t.md = String(md||"");
   t.name = (name||titleOf(t.md)).slice(0,48);
@@ -2029,20 +2469,33 @@ function setMarkdown(t, md, name, base, source){
   updateWindowTitle();
   findSimilar(t);
 }
-async function renderTab(t){
+async function renderTab(t, keepScroll){
   const v = document.getElementById("view-"+t.id); if(!v) return;
   const page = v.querySelector(".page");
-  let html = "";
+  // .view is the scroll container; innerHTML replacement would snap it to the
+  // top, so keep it when this is a re-render caused by an edit.
+  const scrollTop = keepScroll ? v.scrollTop : 0;
+  let html = "", blocks = null;
   try{
-    if(useIpc()) html = await rust("render",{text:t.md, base:t.base||""});
-    else html = fallbackRender(t.md);
-  }catch(e){ html = fallbackRender(t.md); }
+    if(useIpc()){
+      const [rHtml, rBlocks] = await Promise.all([
+        rust("render", { text: t.md, base: t.base || "" }),
+        dbCall("blocks", { text: t.md }),
+      ]);
+      html = typeof rHtml === "string" ? rHtml : "";
+      blocks = Array.isArray(rBlocks) ? rBlocks : null;
+    } else {
+      html = fallbackRender(t.md);
+    }
+  }catch(e){ html = fallbackRender(t.md); blocks = null; }
   page.innerHTML = '<article class="markdown-body">'+html+'</article>';
+  t.blocks = blocks;
   t.rendered = true; t.dirty = false;
+  if(keepScroll) v.scrollTop = scrollTop;
   // Annotations resolve against the *enhanced* DOM (KaTeX/mermaid mutate it).
   enhance(page, t.md)
     .catch(e => console.warn("mdview: enhancement failed", e))
-    .finally(() => { mdvAnnotationsRefresh(t.id); });
+    .finally(() => { mdvAnnotationsRefresh(t.id); if(keepScroll) v.scrollTop = scrollTop; updateEditButton(); });
   buildToc(); // headings are in the DOM already; costs one query pass
 }
 
@@ -2402,7 +2855,13 @@ $("#theme").onclick = ()=>{
 
 /* ---------- shortcuts ---------- */
 document.addEventListener("keydown", e=>{
+  if(e.isComposing) return; // an IME must never see our shortcuts fire mid-composition
   const mod = e.ctrlKey||e.metaKey;
+  if(mod && e.shiftKey && (e.key==="e"||e.key==="E")){ e.preventDefault(); void toggleSourceView(); }
+  else if(mod && (e.key==="e"||e.key==="E")){ e.preventDefault(); setEditMode(!editMode); }
+  else if(mod && !sourceView && !activeCell && editMode && !e.shiftKey && (e.key==="z"||e.key==="Z")){ e.preventDefault(); docUndo(); }
+  else if(mod && !sourceView && !activeCell && editMode
+      && (e.key==="y"||e.key==="Y" || (e.shiftKey && (e.key==="Z"||e.key==="z")))){ e.preventDefault(); docRedo(); }
   if(mod && (e.key==="t"||e.key==="T")){ e.preventDefault(); newTab(); }
   else if(mod && (e.key==="s"||e.key==="S")){ e.preventDefault(); saveCurrent(); }
   else if(mod && (e.key==="w"||e.key==="W")){ e.preventDefault(); if(cur()) closeTab(cur().id); }

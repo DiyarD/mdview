@@ -16,7 +16,49 @@ const {
 } = require("./page-harness");
 
 const CDP_PORT = 9334;
-const FIXTURE_HTML = "<h1>UI test doc</h1><p>alpha bravo charlie</p>";
+// Fixture renderer: a deliberately small stand-in for the Rust side, good for
+// the simple documents this suite pastes (headings, paragraphs, lists, code
+// fences and quotes are all it distinguishes). It emits wrapped blocks that
+// match the "blocks" command it also answers, so the app's edit flow runs
+// end-to-end. Rust has its own thorough span tests for real markdown.
+const shimBlocks =
+  "function __mdBlocks(text) {\n" +
+  "  var lines = text.split('\\n');\n" +
+  "  var blocks = [], cur = null, i;\n" +
+  "  var inFence = false;\n" +
+  "  for (i = 0; i < lines.length; i++) {\n" +
+  "    var ln = lines[i];\n" +
+  "    var fence = /^```/.test(ln);\n" +
+  "    if (!ln.trim() && !inFence) { if (cur) { blocks.push(cur); cur = null; } continue; }\n" +
+  "    var kind = 'paragraph';\n" +
+  "    if (inFence) kind = 'code';\n" +
+  "    else if (/^#{1,6}\\s/.test(ln)) kind = 'heading';\n" +
+  "    else if (/^(-|\\*|\\d+\\.)\\s/.test(ln)) kind = 'list';\n" +
+  "    else if (/^>/.test(ln)) kind = 'quote';\n" +
+  "    else if (/^```/.test(ln)) kind = 'code';\n" +
+  "    if (!cur) cur = { index: blocks.length, kind: kind, start_line: i, end_line: i + 1 };\n" +
+  "    else cur.end_line = i + 1;\n" +
+  "    if (fence) inFence = !inFence;\n" +
+  "  }\n" +
+  "  if (cur) blocks.push(cur);\n" +
+  "  return blocks;\n" +
+  "}\n" +
+  "function __mdRender(text) {\n" +
+  "  var escH = function (s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); };\n" +
+  "  var lines = text.split('\\n');\n" +
+  "  var bl = __mdBlocks(text);\n" +
+  "  return bl.map(function (b) {\n" +
+  "    var src = lines.slice(b.start_line, b.end_line).join('\\n');\n" +
+  "    var inner;\n" +
+  "    var h = src.match(/^#{1,6}\\s+(.+)/);\n" +
+  "    if (h) inner = '<h1>' + escH(h[1]) + '</h1>';\n" +
+  "    else if (b.kind === 'code') inner = '<pre><code>' + escH(src) + '</code></pre>';\n" +
+  "    else if (b.kind === 'list') inner = '<ul><li>' + escH(src.replace(/^(-|\\*|\\d+\\.)\\s+/, '')) + '</li></ul>';\n" +
+  "    else if (b.kind === 'quote') inner = '<blockquote><p>' + escH(src.replace(/^>\\s?/, '')) + '</p></blockquote>';\n" +
+  "    else inner = '<p>' + escH(src) + '</p>';\n" +
+  "    return '<div class=\"md-block\" data-blk=\"' + b.index + '\">' + inner + '</div>';\n" +
+  "  }).join('\\n');\n" +
+  "}\n";
 
 // A faithful stand-in for the Rust document store: in-memory, byte-exact
 // round-trip, same commands and payloads the real IPC layer answers.
@@ -26,6 +68,7 @@ const shim =
   "var __annotations = [];\n" +
   "var __annNextId = 1;\n" +
   "function __now() { return Math.floor(Date.now() / 1000); }\n" +
+  shimBlocks +
   "window.__UI_TEST_SENT__ = [];\n" +
   "window.ipc = { postMessage: function (raw) {\n" +
   "  var m = JSON.parse(raw);\n" +
@@ -34,7 +77,8 @@ const shim =
   "    if (typeof window.__UI_TEST_SLOW_ADD__ !== 'boolean') window.__UI_TEST_SLOW_ADD__ = false;\n" +
   "    setTimeout(function () { window.__mdview_ipc_result(m.id, ok, data); }, window.__UI_TEST_SLOW_ADD__ ? 350 : 0);\n" +
   "  };\n" +
-  "  if (m.cmd === 'render') reply(true, " + JSON.stringify(FIXTURE_HTML) + ");\n" +
+  "  if (m.cmd === 'render') reply(true, __mdRender(String(m.text || '')));\n" +
+  "  else if (m.cmd === 'blocks') reply(true, JSON.stringify(__mdBlocks(String(m.text || ''))));\n" +
   "  else if (m.cmd === 'save_prefs') reply(true, true);\n" +
   "  else if (m.cmd === 'set_title') reply(true, 'true');\n" +
   "  else if (m.cmd === 'clipboard_files') reply(true, '[]');\n" +
@@ -154,6 +198,10 @@ async function main() {
   }));
 
   const server = startServer({ work, rootForLocal: work });
+  // The app loads the editor bundle over the same loopback HTTP surface the
+  // binary uses for /asset/ (buildPage re-points the prefixes at this server).
+  fs.mkdirSync(path.join(work, "codemirror"), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, "frontend", "vendor", "codemirror.min.js"), path.join(work, "codemirror", "codemirror.min.js"));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const port = server.address().port;
 
@@ -286,8 +334,9 @@ async function main() {
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'annotation_add'; })", 8000));
     report("storing does not open any dialog", (await evalValue(send, "document.querySelector('#annEditor').hidden")) === true);
     const annFirst = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'annotation_add'; }).pop()");
+    const expectedQuote = await evalValue(send, "(document.querySelector('.view.active .markdown-body p') || {}).textContent || ''");
     report("default highlight is yellow, note-free, verbatim quote",
-      annFirst && annFirst.color === 'yellow' && annFirst.note === '' && annFirst.exact === 'alpha bravo charlie',
+      annFirst && annFirst.color === 'yellow' && annFirst.note === '' && annFirst.exact === expectedQuote,
       JSON.stringify(annFirst));
     report("annotation auto-saves the unsaved document first", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document'; })", 8000));
@@ -479,16 +528,230 @@ async function main() {
     await resolveCase("resolver: empty selection is unusable", "abc",
       { exact: "   ", prefix: "", suffix: "", start: 0, end: 3 }, null);
 
-    // 9. Bridge contract: every request id is the bridge's own string — the
+    // 9. Editing: modal mode, click-to-edit blocks, commit path, undo,
+    //    auto-save, close-confirmation, whole-document source view.
+    const pasteForEdit = `(() => {
+      const dt = new DataTransfer();
+      dt.setData("text/plain", "# Edit me\\n\\nfirst body\\n\\nsecond body\\n\\n- item a\\n- item b\\n");
+      document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      return true;
+    })()`;
+    // Key events CM actually receives: dispatched on the editor's content
+    // element itself (this is the path real keypresses take). CDP
+    // Input.dispatchKeyEvent does not reach CM in headless Chrome.
+    const keyInCell = (key, mods) => {
+      const opts = Object.assign({ key, bubbles: true, cancelable: true }, mods || {});
+      return evalValue(send, `(() => {
+        const root = document.querySelector('.view.active .md-cell');
+        const elt = root && (root.querySelector('.cm-content') || root);
+        if (!elt) return false;
+        elt.dispatchEvent(new KeyboardEvent('keydown', ${JSON.stringify(opts)}));
+        return true;
+      })()`);
+    };
+    await evalValue(send, "document.querySelector('#newtab').click()");
+    await evalValue(send, pasteForEdit);
+    report("edit fixture renders", await waitFor(send,
+      "!!document.querySelector('.view.active .markdown-body') && !!document.querySelector('.view.active .md-block[data-blk=\"0\"]')", 10000));
+    report("edit button enabled with a document open",
+      await evalValue(send, "!document.querySelector('#editBtn').disabled"));
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+E enables edit mode (body class + button)", await waitFor(send,
+      "document.body.classList.contains('editing') && document.querySelector('#editBtn').getAttribute('aria-pressed') === 'true'", 5000));
+    await evalValue(send, `(() => {
+      const h = document.querySelector('.view.active .markdown-body h1');
+      const r = h.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true }));
+      return true;
+    })()`);
+    report("clicking a block opens a cell with its raw source", await waitFor(send,
+      "!!document.querySelector('.view.active .md-cell') && document.querySelector('.view.active .md-cell .cm-content').textContent === '# Edit me'", 8000));
+    report("the rendered block is hidden while its cell is open",
+      await evalValue(send, "!!document.querySelector('.view.active .md-block-hidden')"));
+    await keyInCell("End");
+    await send("Input.insertText", { text: " (edited)" });
+    report("typing lands in the cell", await waitFor(send,
+      "document.querySelector('.view.active .md-cell .cm-content').textContent === '# Edit me (edited)'", 5000));
+    await keyInCell("Enter", { ctrlKey: true });
+    report("Ctrl+Enter commits in place and keeps the cell open", await waitFor(send,
+      "document.querySelector('.view.active .md-cell .cm-content').textContent === '# Edit me (edited)'", 3000));
+    report("commit auto-saves the document with the new source", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('# Edit me (edited)') >= 0; })", 8000));
+    await keyInCell("Enter", { shiftKey: true });
+    report("Shift+Enter commits and moves to the next block", await waitFor(send,
+      "document.querySelector('.view.active .md-cell .cm-content').textContent === 'first body'", 5000));
+    report("the previous block renders again (not hidden)", await waitFor(send,
+      "!!document.querySelector('.view.active .markdown-body h1') && !document.querySelector('.view.active .markdown-body h1').parentElement.classList.contains('md-block-hidden')", 5000));
+    report("annotation creation is inert in edit mode (no proposal button)", await (async () => {
+      await evalValue(send, `(() => {
+        const p = document.querySelector('.view.active .markdown-body p');
+        const tn = p && p.firstChild; if (!tn) return false;
+        const r = document.createRange(); r.selectNodeContents(tn);
+        const s = window.getSelection(); s.removeAllRanges(); s.addRange(r);
+        document.dispatchEvent(new PointerEvent('pointerup', { button: 0, bubbles: true, clientX: 40, clientY: 40 }));
+        return true;
+      })()`);
+      await new Promise(r => setTimeout(r, 300));
+      return evalValue(send, "document.querySelector('#annPropose').hidden");
+    })());
+    // Escape applies and closes the next cell.
+    await keyInCell("Escape");
+    report("Escape closes the cell back to reading view", await waitFor(send,
+      "!document.querySelector('.view.active .md-cell')", 5000));
+    // Document-level undo reverts the committed edit.
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+Z outside the cell undoes the last committed edit", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('# Edit me') >= 0 && String(m.text || '').indexOf('(edited)') < 0; })", 8000));
+    // Alt+Enter opens a virtual "new paragraph" cell below the current block.
+    await evalValue(send, `(() => {
+      const target = Array.from(document.querySelectorAll('.view.active .markdown-body p')).find(p => p.textContent === 'first body');
+      if (!target) return false;
+      const r = target.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true }));
+      return true;
+    })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
+    await keyInCell("Enter", { altKey: true });
+    report("Alt+Enter opens a new-paragraph cell below the block", await waitFor(send,
+      "!!document.querySelector('.view.active .md-cell-insert')", 5000));
+    await send("Input.insertText", { text: "inserted para" });
+    await keyInCell("Enter", { shiftKey: true });
+    report("Shift+Enter on the new cell creates the paragraph", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('inserted para') >= 0; })", 8000));
+    report("the inserted paragraph renders", await waitFor(send,
+      "Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
+    // Empty an existing cell: the block is deleted on commit.
+    await evalValue(send, `(() => {
+      const target = Array.from(document.querySelectorAll('.view.active .markdown-body p')).find(p => p.textContent === 'inserted para');
+      if (!target) return false;
+      const r = target.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true }));
+      return true;
+    })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
+    await keyInCell("a", { ctrlKey: true });
+    await keyInCell("Backspace");
+    report("emptying the cell empties its source", await waitFor(send,
+      "document.querySelector('.view.active .md-cell .cm-content').textContent === ''", 3000));
+    await keyInCell("Enter", { shiftKey: true });
+    report("committing an empty cell deletes the block", await waitFor(send,
+      "!Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
+    // Shift+Enter advanced the cell into the next block; close it first.
+    await keyInCell("Escape");
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+Z restores the deleted block", await waitFor(send,
+      "Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+Y redoes the block deletion", await waitFor(send,
+      "!Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
+    // CRLF documents keep their line endings through an edit round trip.
+    await evalValue(send, "document.querySelector('#newtab').click()");
+    await evalValue(send, `(() => { const dt = new DataTransfer(); dt.setData("text/plain", "# CRLF doc\\r\\n\\r\\nbody\\r\\n"); document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .markdown-body')", 10000);
+    // edit mode is already on from the earlier toggles
+    if (!(await evalValue(send, "document.body.classList.contains('editing')"))) {
+      await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
+    }
+    await evalValue(send, `(() => { const p = document.querySelector('.view.active .markdown-body p'); if (!p) return false; const r = p.getBoundingClientRect(); document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true })); return true; })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
+    await keyInCell("End");
+    await send("Input.insertText", { text: "!" });
+    await keyInCell("Escape");
+    report("CRLF survives an edit round trip", await waitFor(send,
+      "cur() && cur().md === '# CRLF doc\\r\\n\\r\\nbody!\\r\\n'", 5000));
+    // Edit mode off.
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+E disables edit mode", await waitFor(send,
+      "!document.body.classList.contains('editing') && document.querySelector('#editBtn').getAttribute('aria-pressed') === 'false'", 5000));
+    // Close-confirmation path: open a cell, type, request close of the tab.
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
+    await evalValue(send, `(() => {
+      const h = document.querySelector('.view.active .markdown-body h1');
+      const r = h.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true }));
+      return true;
+    })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
+    await send("Input.insertText", { text: "XYZ" });
+    await evalValue(send, `(() => {
+      const tabs = Array.from(document.querySelectorAll('.tab'));
+      const active = tabs.find(t => t.classList.contains('active'));
+      const x = active && active.querySelector('.x');
+      if (x) x.click();
+      return true;
+    })()`);
+    report("closing a tab with a mid-edit cell asks first (no silent loss)", await waitFor(send,
+      "!document.querySelector('#confirmSave').hidden", 5000));
+    const tabCountAtAsk = await evalValue(send, "document.querySelectorAll('.tab').length");
+    await evalValue(send, "document.querySelector('#confirmCancel').click()");
+    report("Cancel keeps the tab and the cell", await waitFor(send,
+      "!!document.querySelector('.view.active .md-cell') && document.querySelectorAll('.tab').length === " + tabCountAtAsk, 3000));
+    await evalValue(send, `(() => {
+      const tabs = Array.from(document.querySelectorAll('.tab'));
+      const active = tabs.find(t => t.classList.contains('active'));
+      const x = active && active.querySelector('.x');
+      if (x) x.click();
+      return true;
+    })()`);
+    await waitFor(send, "!document.querySelector('#confirmSave').hidden", 5000);
+    await evalValue(send, "document.querySelector('#confirmDiscard').click()");
+    report("Discard closes the tab and drops the uncommitted text", await waitFor(send,
+      "document.querySelectorAll('.tab').length === " + (tabCountAtAsk - 1), 5000));
+    // "Save & close" (Apply) commits the pending text and closes the tab.
+    await evalValue(send, `(() => { const dt = new DataTransfer(); dt.setData("text/plain", "# Apply doc\\n\\nbody\\n"); document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .markdown-body')", 10000);
+    await evalValue(send, "if (!document.body.classList.contains('editing')) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }));");
+    await evalValue(send, `(() => {
+      const h = document.querySelector('.view.active .markdown-body h1');
+      const r = h.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true }));
+      return true;
+    })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
+    await send("Input.insertText", { text: "APPLIED-TEXT " });
+    await evalValue(send, `(() => { const tabs = Array.from(document.querySelectorAll('.tab')); const active = tabs.find(t => t.classList.contains('active')); const x = active && active.querySelector('.x'); if (x) x.click(); return true; })()`);
+    await waitFor(send, "!document.querySelector('#confirmSave').hidden", 5000);
+    await evalValue(send, "document.querySelector('#confirmApply').click()");
+    report("Save & close commits the pending text and closes the tab", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('APPLIED-TEXT') >= 0; })", 8000));
+    // A fresh document on whatever tab remains: the source-view test needs one.
+    const tabCountBeforeSrc = await evalValue(send, "document.querySelectorAll('.tab').length");
+    await evalValue(send, `(() => { const dt = new DataTransfer(); dt.setData("text/plain", "# Src doc\\n\\nbody line\\n"); document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .markdown-body')", 10000);
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'E', ctrlKey: true, shiftKey: true, bubbles: true }))");
+    report("Ctrl+Shift+E opens the whole-document source view", await waitFor(send,
+      "!!document.querySelector('.srcview .cm-content')", 8000));
+    const srcText = await evalValue(send, "document.querySelector('.srcview .cm-content').textContent");
+    report("source view carries the full markdown source", typeof srcText === "string" && srcText.length > 5, srcText && String(srcText).slice(0, 60));
+    const keyInSrc = (key, mods) => {
+      const opts = Object.assign({ key, bubbles: true, cancelable: true }, mods || {});
+      return evalValue(send, `(() => {
+        const root = document.querySelector('.srcview .cm-content');
+        if (!root) return false;
+        root.dispatchEvent(new KeyboardEvent('keydown', ${JSON.stringify(opts)}));
+        return true;
+      })()`);
+    };
+    await send("Input.insertText", { text: "src-edit-marker\n" });
+    await keyInSrc("Escape");
+    report("Escape applies source view and returns to the page", await waitFor(send,
+      "!document.querySelector('.srcview')", 5000));
+    report("source view edit reaches the store (auto-save)", await waitFor(send,
+      "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('src-edit-marker') >= 0; })", 8000));
+    report("tab count unchanged by source view round trip", await evalValue(send, "document.querySelectorAll('.tab').length === " + tabCountBeforeSrc));
+    // 10. Bridge contract: every request id is the bridge's own string — the
     //    exact regression that hung every DB call.
     const ids = await evalValue(send, "window.__UI_TEST_SENT__.map(function (m) { return m.id; })");
     report("every request id is the bridge's own (rN)",
       Array.isArray(ids) && ids.length > 0 && ids.every((id) => typeof id === "string" && /^r\d+$/.test(id)),
       JSON.stringify(ids));
 
+    // A fresh Home tab: the delete flow needs the welcome screen (it was
+    // consumed by the editing section's pastes).
+    await evalValue(send, "document.querySelector('#newtab').click()");
     // 10. Delete a saved document from the home screen. The annotation flow
-    //     auto-saved a second document earlier in this suite, so the list now
-    //     holds two rows — target the "Renamed doc" row by title.
+    //     auto-saved the Sim doc earlier, so the list holds several rows —
+    //     target the "Renamed doc" row by title.
     const clickRowDelete = `(() => {
       const rows = Array.from(document.querySelectorAll('.saved-item'));
       const row = rows.find(r => r.querySelector('.saved-title') && r.querySelector('.saved-title').textContent === 'Renamed doc');
@@ -509,7 +772,7 @@ async function main() {
     report("second click deletes the row", await waitFor(send,
       "!Array.from(document.querySelectorAll('.saved-title')).some(function (e) { return e.textContent === 'Renamed doc'; })", 5000));
     report("the other saved document is untouched",
-      (await evalValue(send, "document.querySelectorAll('.saved-item').length")) === 1);
+      await evalValue(send, "Array.from(document.querySelectorAll('.saved-title')).some(function (e) { return e.textContent === 'Sim doc'; })"));
     const sentDelete = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'delete_document'; })");
     report("delete_document targets the saved row",
       Array.isArray(sentDelete) && sentDelete.length === 1 && sentDelete[0].doc_id === 1,
