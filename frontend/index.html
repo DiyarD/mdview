@@ -259,7 +259,7 @@
   .md-cell .cm-focused,.srcview .cm-focused{ outline:none !important; }
   .md-cell .cm-line,.srcview .cm-line{ padding:0; }
   /* Whole-document source view (Ctrl+Shift+E): a full-height editing layer over
-     everything, Esc or Ctrl+Shift+E applies. */
+     everything, Ctrl+Enter or Ctrl+Shift+E applies. */
   .srcview{ position:fixed; inset:var(--bar-h) 0 0 0; z-index:150; display:flex; flex-direction:column;
     background:var(--bg); }
   .srcview-bar{ display:flex; align-items:center; gap:12px; padding:8px 16px;
@@ -1869,7 +1869,8 @@ function annWireEvents(){
     if(editor && !editor.hidden) annCloseEditor();
   });
   document.addEventListener("keydown", e => {
-    // The cell editor owns Escape while it is open; the highlight system stays out.
+    // A cell has open focus; the highlight system stays out entirely.
+    // (Cells bind Ctrl+Enter to apply, not Esc — Esc does nothing inside a cell.)
     if(activeCell || sourceView) return;
     if(e.key === "Escape"){
       const editor = $("#annEditor");
@@ -2179,9 +2180,8 @@ function spliceDoc(t, offset, removedLen, inserted){
 function cellKeymap(){
   return [
     { key: "Shift-Enter", run: () => { commitCell("next"); return true; } },
-    { key: "Mod-Enter", run: () => { commitCell("stay"); return true; } },
+    { key: "Mod-Enter", run: () => { commitCell("blur"); return true; } },
     { key: "Alt-Enter", run: () => { commitCell("insert"); return true; } },
-    { key: "Escape", run: () => { commitCell("blur"); return true; } },
   ];
 }
 function cmExtensions(CM, extraKeys, lineSeparator){
@@ -2267,7 +2267,7 @@ function openBlockByIndex(t, index){
   const cell = document.createElement("div");
   cell.className = "md-cell";
   cell.innerHTML = '<div class="cell-bar"><span>' + esc(span.kind || "block") + ' · editing source</span>'
-    + '<span class="cell-hint"><kbd>Shift</kbd>+<kbd>Enter</kbd> next · <kbd>Alt</kbd>+<kbd>Enter</kbd> insert below · <kbd>Esc</kbd> apply</span></div>';
+    + '<span class="cell-hint"><kbd>Shift</kbd>+<kbd>Enter</kbd> next · <kbd>Alt</kbd>+<kbd>Enter</kbd> insert below · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> apply</span></div>';
   const host = document.createElement("div");
   cell.appendChild(host);
   blkEl.classList.add("md-block-hidden");
@@ -2286,7 +2286,7 @@ function openInsertCell(t, afterIndex){
   const cell = document.createElement("div");
   cell.className = "md-cell md-cell-insert";
   cell.innerHTML = '<div class="cell-bar"><span>new paragraph</span>'
-    + '<span class="cell-hint"><kbd>Shift</kbd>+<kbd>Enter</kbd> create · <kbd>Esc</kbd> apply &amp; close</span></div>';
+    + '<span class="cell-hint"><kbd>Shift</kbd>+<kbd>Enter</kbd> create · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> apply &amp; close</span></div>';
   const host = document.createElement("div");
   cell.appendChild(host);
   const blkEl = v.querySelector('.md-block[data-blk="' + afterIndex + '"]');
@@ -2325,6 +2325,9 @@ async function commitCell(reason){
     t.edited = true;
     void mdviewAutoSaveDocument(t, true); // same door annotations use
   }
+  // Apply the splice but keep the cell open. Used only by Ctrl+S (save the
+  // document without dropping the editor); no key in the cell binds this any
+  // more.
   if(reason === "stay"){ c.orig = src; c.end = c.start + src.length; return t; }
   const keepIndex = c.index;
   const blkEl = c.blkEl;
@@ -2404,7 +2407,7 @@ async function toggleSourceView(){
   overlay.setAttribute("role", "dialog");
   overlay.setAttribute("aria-label", "Source editor for " + t.name);
   overlay.innerHTML = '<div class="srcview-bar"><span>Editing <b>' + esc(t.name) + '</b> as raw markdown</span>'
-    + '<span style="margin-left:auto"><kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> to apply</span></div>';
+    + '<span style="margin-left:auto"><kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> to apply</span></div>';
   const body = document.createElement("div");
   body.className = "srcview-body";
   overlay.appendChild(body);
@@ -2412,7 +2415,7 @@ async function toggleSourceView(){
   const CM = window.MDViewCM;
   const orig = t.md;
   const keys = [
-    { key: "Escape", run: () => { closeSourceView(true); return true; } },
+    { key: "Mod-Enter", run: () => { closeSourceView(true); return true; } },
     { key: "Shift-Mod-e", run: () => { closeSourceView(true); return true; } },
   ];
   const state = CM.EditorState.create({ doc: t.md, extensions: cmExtensions(CM, keys, lineSepOf(t.md)) });

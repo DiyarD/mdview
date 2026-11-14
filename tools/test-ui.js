@@ -587,10 +587,18 @@ async function main() {
     report("typing lands in the cell", await waitFor(send,
       "document.querySelector('.view.active .md-cell .cm-content').textContent === '# Edit me (edited)'", 5000));
     await keyInCell("Enter", { ctrlKey: true });
-    report("Ctrl+Enter commits in place and keeps the cell open", await waitFor(send,
-      "document.querySelector('.view.active .md-cell .cm-content').textContent === '# Edit me (edited)'", 3000));
+    report("Ctrl+Enter applies and closes the cell", await waitFor(send,
+      "!document.querySelector('.view.active .md-cell') && document.querySelector('.view.active .markdown-body h1').textContent.indexOf('(edited)') >= 0", 5000));
     report("commit auto-saves the document with the new source", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('# Edit me (edited)') >= 0; })", 8000));
+    // Re-open the block and exercise Shift+Enter's apply-and-advance.
+    await evalValue(send, `(() => {
+      const h = document.querySelector('.view.active .markdown-body h1');
+      const r = h.getBoundingClientRect();
+      document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true }));
+      return true;
+    })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
     await keyInCell("Enter", { shiftKey: true });
     report("Shift+Enter commits and moves to the next block", await waitFor(send,
       "document.querySelector('.view.active .md-cell .cm-content').textContent === 'first body'", 5000));
@@ -608,9 +616,9 @@ async function main() {
       await new Promise(r => setTimeout(r, 300));
       return evalValue(send, "document.querySelector('#annPropose').hidden");
     })());
-    // Escape applies and closes the next cell.
-    await keyInCell("Escape");
-    report("Escape closes the cell back to reading view", await waitFor(send,
+    // Ctrl+Enter applies and closes the next cell.
+    await keyInCell("Enter", { ctrlKey: true });
+    report("Ctrl+Enter applies and closes the back-to-reading-view cell", await waitFor(send,
       "!document.querySelector('.view.active .md-cell')", 5000));
     // Document-level undo reverts the committed edit.
     await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
@@ -656,7 +664,7 @@ async function main() {
     report("committing an empty cell deletes the block", await waitFor(send,
       "!Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
     // Shift+Enter advanced the cell into the next block; close it first.
-    await keyInCell("Escape");
+    await keyInCell("Enter", { ctrlKey: true });
     await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
     report("Ctrl+Z restores the deleted block", await waitFor(send,
       "Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
@@ -668,7 +676,7 @@ async function main() {
     await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
     await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "End", code: "End", windowsVirtualKeyCode: 35, nativeVirtualKeyCode: 35 });
     await send("Input.insertText", { text: "XYZ" });
-    await keyInCell("Escape");
+    await keyInCell("Enter", { ctrlKey: true });
     await waitFor(send, "document.querySelector('.view.active .markdown-body h1').textContent.indexOf('XYZ') >= 0", 5000);
     await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
     report("Ctrl+Z undoes the typed edit", await waitFor(send,
@@ -688,7 +696,7 @@ async function main() {
     await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
     await keyInCell("End");
     await send("Input.insertText", { text: "!" });
-    await keyInCell("Escape");
+    await keyInCell("Enter", { ctrlKey: true });
     report("CRLF survives an edit round trip", await waitFor(send,
       "cur() && cur().md === '# CRLF doc\\r\\n\\r\\nbody!\\r\\n'", 5000));
     // Paste inside a cell inserts at the caret — it never replaces the tab.
@@ -720,7 +728,7 @@ async function main() {
     })()`);
     report("bare [ and ] in a cell do not resize the reading width",
       await evalValue(send, "document.getElementById('width').value === " + JSON.stringify(widthBefore)));
-    await keyInCell("Escape");
+    await keyInCell("Enter", { ctrlKey: true });
     // Edit mode off.
     await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
     report("Ctrl+E disables edit mode", await waitFor(send,
@@ -795,8 +803,8 @@ async function main() {
       })()`);
     };
     await send("Input.insertText", { text: "src-edit-marker\n" });
-    await keyInSrc("Escape");
-    report("Escape applies source view and returns to the page", await waitFor(send,
+    await keyInSrc("Enter", { ctrlKey: true });
+    report("Ctrl+Enter applies the source view and returns to the page", await waitFor(send,
       "!document.querySelector('.srcview')", 5000));
     report("source view edit reaches the store (auto-save)", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('src-edit-marker') >= 0; })", 8000));

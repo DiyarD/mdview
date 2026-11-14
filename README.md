@@ -350,9 +350,8 @@ the edited version lives in **Saved documents**.
 - **Commit is explicit** — like a notebook, not a WYSIWYG. <kbd>Enter</kbd> is
   a new line; <kbd>Shift</kbd>+<kbd>Enter</kbd> applies and jumps to the next
   block; <kbd>Alt</kbd>+<kbd>Enter</kbd> applies and opens a fresh paragraph
-  right below it; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> applies and keeps you in
-  the block; <kbd>Esc</kbd> applies and drops back to reading. Emptying a
-  block deletes it — undo recreates it.
+  right below it; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> applies and closes the
+  block. Emptying a block deletes it — undo recreates it.
 - **Undo that behaves** — inside a block, undo groups by typing with word
   boundaries (CodeMirror history, 500 ms join window). With the cursor
   outside any block, <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes the **last committed
@@ -361,7 +360,8 @@ the edited version lives in **Saved documents**.
   patches, not copies).
 - **Whole document in one go** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>
   opens the document as a full source view for cross-block work: reorder
-  sections, fix something everywhere, re-title. <kbd>Esc</kbd> applies.
+  sections, fix something everywhere, re-title. <kbd>Ctrl</kbd>+<kbd>Enter</kbd>
+  or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> applies.
 - **Save is the same Save** — each applied change auto-saves through the same
   immediate-flush path highlights use; the document shows its saved state
   exactly as before.
@@ -428,10 +428,10 @@ tray tooltip always shows the combination that was actually claimed.
 | <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider reading area |
 | <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> | Narrower / wider reading area |
 | <kbd>F11</kbd> | Borderless fullscreen (native, not CSS) |
-| <kbd>Esc</kbd> | Apply the edit and close the block / contents menu |
+| <kbd>Esc</kbd> | Close the contents menu |
 | <kbd>Shift</kbd>+<kbd>Enter</kbd> | (edit mode) Apply block, edit next |
 | <kbd>Alt</kbd>+<kbd>Enter</kbd> | (edit mode) Apply block, insert paragraph below |
-| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | (edit mode) Apply, keep editing |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | (edit mode) Apply and close block / source view |
 | <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> | Undo / redo (outside a cell: last committed edit) |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | Print / Save as PDF (native dialog) |
 
