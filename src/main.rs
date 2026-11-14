@@ -1702,8 +1702,13 @@ fn handle_ipc(body: &str, proxy: &tao::event_loop::EventLoopProxy<UserEvent>) {
             let source_ref = v.get("source_ref").and_then(|x| x.as_str()).unwrap_or("").to_string();
             let res = db_lock()
                 .and_then(|s| {
+                    // An auto-save carrying a saved-document id updates that
+                    // same row instead of inserting a new one each commit.
                     let r = if cmd == "auto_save_document" {
-                        s.auto_save(&title, &text, &base, &source_kind, &source_ref)
+                        match doc_id {
+                            Some(id) => s.save(Some(id), &title, &text, &base, &source_kind, &source_ref),
+                            None => s.auto_save(&title, &text, &base, &source_kind, &source_ref),
+                        }
                     } else {
                         s.save(doc_id, &title, &text, &base, &source_kind, &source_ref)
                     };

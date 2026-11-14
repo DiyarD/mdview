@@ -217,7 +217,7 @@ async function main() {
     // 1. Boot: one empty tab, saved-documents section shows the empty state.
     report("boot creates a tab", await waitFor(send, "document.querySelectorAll('.tab').length === 1", 10000));
     report("welcome shows empty saved state", await waitFor(send,
-      "!!document.querySelector('.saved-empty') && document.querySelector('.saved-empty').textContent.indexOf('No saved documents') >= 0", 5000));
+      "!!document.querySelector('.view.active .saved-empty') && document.querySelector('.view.active .saved-empty').textContent.indexOf('No saved documents') >= 0", 5000));
 
     // 1b. Paste now reads the clipboard natively (Win32 via Rust), not the
     //     permission-blocked browser API.
@@ -225,11 +225,18 @@ async function main() {
       await evalValue(send, "document.querySelector('[data-act=\"paste\"]').click()");
       return waitFor(send, "!!document.querySelector('.markdown-body')", 10000);
     })());
-    const buttonPasteTitle = await evalValue(send, "(document.querySelector('.tab .t') || {}).textContent || ''");
+    const buttonPasteTitle = await evalValue(send, "(document.querySelector('.tab.active .t') || {}).textContent || ''");
     report("Paste now titles the tab from the document", buttonPasteTitle === "Button paste doc", "got: " + buttonPasteTitle);
 
-    // 2. Paste a document — the real paste path.
-    report("paste renders a tab", await (async () => {
+    // 1c. Paste-replace on an already-rendered tab is inert — it is now a
+    //     Home-page-only flow (paste never hijacks regular tabs).
+    await evalValue(send, `(() => { const dt = new DataTransfer(); dt.setData("text/plain", "# UI test doc\\n\\nalpha bravo charlie"); document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`);
+    report("paste on a rendered tab does not replace its document",
+      await evalValue(send, "(cur()||{}).md === '# Button paste doc\\n\\nbutton paste body' && document.querySelectorAll('.tab').length === 1"));
+
+    // 2. Paste a document — the Home-page path (fresh empty tab).
+    await evalValue(send, "document.querySelector('#newtab').click()");
+    report("paste renders a tab on Home", await (async () => {
       await evalValue(send, `(() => {
         const dt = new DataTransfer();
         dt.setData("text/plain", "# UI test doc\\n\\nalpha bravo charlie");
@@ -238,7 +245,7 @@ async function main() {
       })()`);
       return waitFor(send, "!!document.querySelector('.markdown-body')", 10000);
     })());
-    const tabTitle = await evalValue(send, "(document.querySelector('.tab .t') || {}).textContent || ''");
+    const tabTitle = await evalValue(send, "(document.querySelector('.tab.active .t') || {}).textContent || ''");
     report("tab is titled from the markdown heading", tabTitle === "UI test doc", "got: " + tabTitle);
 
     // 3. Save (Ctrl+S button). The exact regression that made this dead: the
@@ -257,10 +264,10 @@ async function main() {
       JSON.stringify(sentSave));
 
     // 4. Double-click the tab to rename → Enter commits.
-    await evalValue(send, "(() => { const t = document.querySelector('.tab'); t.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()");
+    await evalValue(send, "(() => { const t = document.querySelector('.tab.active'); t.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })); return true; })()");
     report("dblclick opens the inline rename input", await waitFor(send, "!!document.querySelector('input.tab-input')", 5000));
     await evalValue(send, "(() => { const i = document.querySelector('input.tab-input'); i.value = 'Renamed doc'; i.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); return true; })()");
-    report("Enter commits the rename", await waitFor(send, "document.querySelector('.tab .t') && document.querySelector('.tab .t').textContent === 'Renamed doc'", 5000));
+    report("Enter commits the rename", await waitFor(send, "document.querySelector('.tab.active .t') && document.querySelector('.tab.active .t').textContent === 'Renamed doc'", 5000));
     const sentRename = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'rename_document'; })");
     report("rename_document goes to the saved document",
       Array.isArray(sentRename) && sentRename.length === 1 && sentRename[0].doc_id === 1 && sentRename[0].title === "Renamed doc",
@@ -271,18 +278,18 @@ async function main() {
     // 5. New tab: the welcome screen shows the saved document.
     await evalValue(send, "document.querySelector('#newtab').click()");
     report("welcome lists the saved document", await waitFor(send,
-      "document.querySelector('.saved-item .saved-title') && document.querySelector('.saved-item .saved-title').textContent === 'Renamed doc'", 5000));
+      "document.querySelector('.view.active .saved-item .saved-title') && document.querySelector('.view.active .saved-item .saved-title').textContent === 'Renamed doc'", 5000));
 
     // 6. Search it — one query box for title and content, with debounce.
     await evalValue(send, "(() => { const s = document.querySelector('.saved-search'); s.value = 'renamed'; s.dispatchEvent(new Event('input', { bubbles: true })); return true; })()");
     report("search fires after the debounce", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'search_documents' && m.query === 'renamed'; })", 5000));
-    const itemAfterSearch = await evalValue(send, "!!document.querySelector('.saved-item')");
+    const itemAfterSearch = await evalValue(send, "!!document.querySelector('.view.active .saved-item')");
     report("matching result stays visible", itemAfterSearch);
 
     // 7. Click it — it must open.
     const beforeTabs = await evalValue(send, "document.querySelectorAll('.tab').length");
-    await evalValue(send, "document.querySelector('.saved-item .saved-main').click()");
+    await evalValue(send, "document.querySelector('.view.active .saved-item .saved-main').click()");
     report("open_document fires for the clicked result", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'open_document' && m.doc_id === 1; })", 5000));
     report("the saved document opens in a new tab", await waitFor(send, "document.querySelectorAll('.tab').length > " + beforeTabs, 5000));
@@ -290,6 +297,8 @@ async function main() {
       "document.querySelector('.view.active .markdown-body') && document.querySelector('.view.active .markdown-body').textContent.indexOf('alpha bravo') >= 0", 5000));
 
     // 8. Similarity offer: a doc that "matches" the saved one must offer it, not swap silently.
+    //    (Fresh Home tab — paste-replace is inert on rendered tabs.)
+    await evalValue(send, "document.querySelector('#newtab').click()");
     await evalValue(send, `(() => {
       const dt = new DataTransfer();
       dt.setData("text/plain", "# Sim doc\\n\\nsim-target-marker alpha bravo charlie");
@@ -491,7 +500,10 @@ async function main() {
     report("Ctrl+W again: strip still matches the tab array",
       (await evalValue(send, "document.querySelectorAll('.tab').length")) === beforeClose - 2);
     // Close everything down; the last close must spawn one fresh empty tab.
-    await pressW(); await pressW(); await pressW(); await pressW();
+    while (await evalValue(send, "document.querySelectorAll('.tab').length") > 1) {
+      await pressW();
+    }
+    await pressW();
     report("closing the last tab creates a fresh empty tab",
       (await evalValue(send, "document.querySelectorAll('.tab').length")) === 1 &&
       (await evalValue(send, "!!document.querySelector('.drop')")) === true);
@@ -555,6 +567,8 @@ async function main() {
       "!!document.querySelector('.view.active .markdown-body') && !!document.querySelector('.view.active .md-block[data-blk=\"0\"]')", 10000));
     report("edit button enabled with a document open",
       await evalValue(send, "!document.querySelector('#editBtn').disabled"));
+    report("edit button shows a visible (non-empty) icon", await evalValue(send,
+      "(() => { const r = document.querySelector('#editBtn svg').getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(document.querySelector('#editBtn svg')).display !== 'none'; })()"));
     await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
     report("Ctrl+E enables edit mode (body class + button)", await waitFor(send,
       "document.body.classList.contains('editing') && document.querySelector('#editBtn').getAttribute('aria-pressed') === 'true'", 5000));
@@ -618,6 +632,11 @@ async function main() {
     await keyInCell("Enter", { shiftKey: true });
     report("Shift+Enter on the new cell creates the paragraph", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('inserted para') >= 0; })", 8000));
+    const asIds = await evalValue(send,
+      "window.__UI_TEST_SENT__.filter(m => m.cmd === 'auto_save_document' && String(m.text || '').indexOf('# Edit me') >= 0).map(m => m.doc_id)");
+    report("repeat auto-saves anchor to the same document row",
+      asIds.length >= 2 && asIds[0] == null && asIds.slice(1).every(id => id === asIds[asIds.length - 1]),
+      JSON.stringify(asIds));
     report("the inserted paragraph renders", await waitFor(send,
       "Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
     // Empty an existing cell: the block is deleted on commit.
@@ -644,6 +663,19 @@ async function main() {
     await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }))");
     report("Ctrl+Y redoes the block deletion", await waitFor(send,
       "!Array.from(document.querySelectorAll('.view.active .markdown-body p')).some(function (p) { return p.textContent === 'inserted para'; })", 5000));
+    // A typed (insert-type) edit round-trips through undo and redo.
+    await evalValue(send, `(() => { const h = document.querySelector('.view.active .markdown-body h1'); const r = h.getBoundingClientRect(); document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true })); return true; })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
+    await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "End", code: "End", windowsVirtualKeyCode: 35, nativeVirtualKeyCode: 35 });
+    await send("Input.insertText", { text: "XYZ" });
+    await keyInCell("Escape");
+    await waitFor(send, "document.querySelector('.view.active .markdown-body h1').textContent.indexOf('XYZ') >= 0", 5000);
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+Z undoes the typed edit", await waitFor(send,
+      "document.querySelector('.view.active .markdown-body h1').textContent.indexOf('XYZ') < 0", 5000));
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+Y redoes the typed edit", await waitFor(send,
+      "document.querySelector('.view.active .markdown-body h1').textContent.indexOf('XYZ') >= 0", 5000));
     // CRLF documents keep their line endings through an edit round trip.
     await evalValue(send, "document.querySelector('#newtab').click()");
     await evalValue(send, `(() => { const dt = new DataTransfer(); dt.setData("text/plain", "# CRLF doc\\r\\n\\r\\nbody\\r\\n"); document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`);
@@ -659,6 +691,36 @@ async function main() {
     await keyInCell("Escape");
     report("CRLF survives an edit round trip", await waitFor(send,
       "cur() && cur().md === '# CRLF doc\\r\\n\\r\\nbody!\\r\\n'", 5000));
+    // Paste inside a cell inserts at the caret — it never replaces the tab.
+    await evalValue(send, "document.querySelector('#newtab').click()");
+    await evalValue(send, `(() => { const dt = new DataTransfer(); dt.setData("text/plain", "# Cell paste doc\\n\\nbody line\\n"); document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true })); return true; })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .markdown-body')", 10000);
+    if (!(await evalValue(send, "document.body.classList.contains('editing')"))) {
+      await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
+    }
+    await evalValue(send, `(() => { const h = document.querySelector('.view.active .markdown-body h1'); const r = h.getBoundingClientRect(); document.dispatchEvent(new MouseEvent('click', { clientX: r.left + 5, clientY: r.top + r.height / 2, bubbles: true })); return true; })()`);
+    await waitFor(send, "!!document.querySelector('.view.active .md-cell .cm-content')", 8000);
+    await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "End", code: "End", windowsVirtualKeyCode: 35, nativeVirtualKeyCode: 35 });
+    await evalValue(send, `(() => {
+      const c = document.querySelector('.view.active .md-cell .cm-content');
+      const dt = new DataTransfer();
+      dt.setData("text/plain", "CELLPASTE");
+      c.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      return true;
+    })()`);
+    report("paste inside a cell inserts there, never replaces the tab", await waitFor(send,
+      "document.querySelector('.view.active .md-cell .cm-content').textContent.indexOf('CELLPASTE') >= 0 && cur().md === '# Cell paste doc\\n\\nbody line\\n'", 5000));
+    // Bare [ and ] keys must not resize the page while typing in a cell.
+    const widthBefore = await evalValue(send, "document.getElementById('width').value");
+    await evalValue(send, `(() => {
+      const c = document.querySelector('.view.active .md-cell .cm-content');
+      c.dispatchEvent(new KeyboardEvent('keydown', { key: '[', bubbles: true, cancelable: true }));
+      c.dispatchEvent(new KeyboardEvent('keydown', { key: ']', bubbles: true, cancelable: true }));
+      return true;
+    })()`);
+    report("bare [ and ] in a cell do not resize the reading width",
+      await evalValue(send, "document.getElementById('width').value === " + JSON.stringify(widthBefore)));
+    await keyInCell("Escape");
     // Edit mode off.
     await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
     report("Ctrl+E disables edit mode", await waitFor(send,
@@ -738,6 +800,13 @@ async function main() {
       "!document.querySelector('.srcview')", 5000));
     report("source view edit reaches the store (auto-save)", await waitFor(send,
       "window.__UI_TEST_SENT__.some(function (m) { return m.cmd === 'auto_save_document' && String(m.text || '').indexOf('src-edit-marker') >= 0; })", 8000));
+    // Doc-level undo walks back across a source-view apply as one step.
+    // The source view ends edit mode, so re-enter it first (the sanctioned flow).
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', ctrlKey: true, bubbles: true }))");
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', ctrlKey: true, bubbles: true }))");
+    report("Ctrl+Z undoes the source-view apply", await waitFor(send,
+      "cur() && String(cur().md || '').indexOf('src-edit-marker') < 0", 5000));
+    await evalValue(send, "document.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', ctrlKey: true, bubbles: true }))");
     report("tab count unchanged by source view round trip", await evalValue(send, "document.querySelectorAll('.tab').length === " + tabCountBeforeSrc));
     // 10. Bridge contract: every request id is the bridge's own string — the
     //    exact regression that hung every DB call.
@@ -753,26 +822,26 @@ async function main() {
     //     auto-saved the Sim doc earlier, so the list holds several rows —
     //     target the "Renamed doc" row by title.
     const clickRowDelete = `(() => {
-      const rows = Array.from(document.querySelectorAll('.saved-item'));
+      const rows = Array.from(document.querySelectorAll('.view.active .saved-item'));
       const row = rows.find(r => r.querySelector('.saved-title') && r.querySelector('.saved-title').textContent === 'Renamed doc');
       const x = row && row.querySelector('.saved-x');
       if (x) x.click();
       return true;
     })()`;
     report("home lists the saved document with a delete button", await waitFor(send,
-      "document.querySelectorAll('.saved-item .saved-x').length >= 2", 5000));
+      "document.querySelectorAll('.view.active .saved-item .saved-x').length >= 2", 5000));
     await evalValue(send, clickRowDelete);
     report("first click arms the confirm", await evalValue(send, `(() => {
-      const rows = Array.from(document.querySelectorAll('.saved-item'));
+      const rows = Array.from(document.querySelectorAll('.view.active .saved-item'));
       const row = rows.find(r => r.querySelector('.saved-title') && r.querySelector('.saved-title').textContent === 'Renamed doc');
       const x = row && row.querySelector('.saved-x');
       return x && x.textContent;
     })()`) === "Delete?");
     await evalValue(send, clickRowDelete);
     report("second click deletes the row", await waitFor(send,
-      "!Array.from(document.querySelectorAll('.saved-title')).some(function (e) { return e.textContent === 'Renamed doc'; })", 5000));
+      "!Array.from(document.querySelectorAll('.view.active .saved-title')).some(function (e) { return e.textContent === 'Renamed doc'; })", 5000));
     report("the other saved document is untouched",
-      await evalValue(send, "Array.from(document.querySelectorAll('.saved-title')).some(function (e) { return e.textContent === 'Sim doc'; })"));
+      await evalValue(send, "Array.from(document.querySelectorAll('.view.active .saved-title')).some(function (e) { return e.textContent === 'Sim doc'; })"));
     const sentDelete = await evalValue(send, "window.__UI_TEST_SENT__.filter(function (m) { return m.cmd === 'delete_document'; })");
     report("delete_document targets the saved row",
       Array.isArray(sentDelete) && sentDelete.length === 1 && sentDelete[0].doc_id === 1,

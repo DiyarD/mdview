@@ -466,6 +466,7 @@
      modal — chrome appears only when it can act. */
   #annToggle{ display:inline-flex; align-items:center; gap:4px; }
   #annToggle svg{ display:block; width:15px; height:15px; }
+  #editBtn svg{ display:block; width:15px; height:15px; }
   #annToggle[aria-pressed="true"]{ color:var(--accent); }
   #annCount{ display:inline-block; color:var(--quote); font-size:10px; font-variant-numeric:tabular-nums; }
   #annPropose{ position:fixed; z-index:130; width:34px; height:34px; padding:0;
@@ -959,6 +960,7 @@ async function openSavedDocument(id, replaceTab){
   if(!d || typeof d !== "object" || typeof d.text !== "string") throw new Error("bad document");
   if(replaceTab){
     replaceTab.md = d.text;
+    resetPatchUndo(replaceTab); // different document — stale patches must not leak in
     replaceTab.name = d.title || replaceTab.name;
     replaceTab.base = d.base || "";
     const si = sourceInfo(d.base, d.source_ref);
@@ -1099,7 +1101,10 @@ async function flushAutoSave(){
   const jobs = autoSaveJobs.splice(0);
   for(const { t, resolve } of jobs){
     try{
+      // Pass the saved-document id when the tab has one, so repeat saves
+      // update the same row instead of inserting a new one each time.
       const d = await dbCall("auto_save_document", {
+        doc_id: t.savedId == null ? null : t.savedId,
         title: t.name, text: t.md, base: t.base||"",
         source_kind: t.sourceKind, source_ref: t.sourceRef
       });
@@ -2067,6 +2072,15 @@ document.addEventListener("paste", async e=>{
   const t = cur(); if(!t) return;
   const v = document.getElementById("view-"+t.id);
   if(v && !v.classList.contains("active")) return;
+  const target = e.target;
+  const onEditable = !!(target && target.closest && target.closest(
+    ".md-cell, .srcview, input, textarea, [contenteditable]"
+  ));
+  // Editors and inputs own their paste (CodeMirror inserts it); the
+  // whole-tab-paste flow only makes sense on the fresh empty Home tab,
+  // so it runs nowhere else.
+  if(onEditable) return;
+  if(t.rendered || t.md) return;
   e.preventDefault(); // this app IS the paste target
   // DataTransfer dies the instant the event dispatch ends (Chromium clears
   // the protected store) — capture text/files BEFORE any await, or a real
@@ -2322,7 +2336,11 @@ async function commitCell(reason){
   else if(reason === "insert") openInsertCell(t, keepIndex);
   return t;
 }
-/* document-level patch undo: one committed edit = one Ctrl+Z step */
+/* document-level patch undo: one committed edit = one Ctrl+Z step.
+   Each entry is one splice {offset, removed, inserted}. Both directions apply
+   the same patch shape, so there is no asymmetry to get wrong — undo checks
+   the inserted region before removing it, redo checks the removed region
+   before re-inserting it. */
 function docUndo(){
   const t = cur(); if(!t || !t.md) return;
   const u = tabUndo(t);
@@ -2330,13 +2348,13 @@ function docUndo(){
   if(!entry) return;
   const at = t.md.slice(entry.offset, entry.offset + entry.inserted.length);
   if(at !== entry.inserted){
-    // The doc drifted since this splice (reload, splice bug). Refuse to guess.
+    // The doc drifted since this splice (reload, wholesale replace). Never guess.
     u.undoStack.push(entry);
     showErr(t, "Undo refused: the document changed since that edit.");
     return;
   }
   t.md = t.md.slice(0, entry.offset) + entry.removed + t.md.slice(entry.offset + entry.inserted.length);
-  u.redoStack.push({ offset: entry.offset, removed: entry.inserted, inserted: entry.removed });
+  u.redoStack.push(entry);   // same patch — redo re-applies it
   t.dirty = true; t.edited = true;
   void mdviewAutoSaveDocument(t, true);
   void renderTab(t, true);
@@ -2353,10 +2371,24 @@ function docRedo(){
     return;
   }
   t.md = t.md.slice(0, entry.offset) + entry.inserted + t.md.slice(entry.offset + entry.removed.length);
-  u.undoStack.push({ offset: entry.offset, removed: entry.inserted, inserted: entry.removed });
+  u.undoStack.push(entry);   // same patch — undo re-applies it inverted
   t.dirty = true; t.edited = true;
   void mdviewAutoSaveDocument(t, true);
   void renderTab(t, true);
+}
+/* A whole-document replacement (source view apply) invalidates every
+   offset-based patch except a full-document one, so represent it as a single
+   {offset:0, removed:old, inserted:new} patch instead of discarding history. */
+function pushFullDocPatch(t, oldText, newText){
+  const u = tabUndo(t);
+  u.undoStack.push({ offset: 0, removed: oldText, inserted: newText });
+  if(u.undoStack.length > DOC_UNDO_MAX) u.undoStack.shift();
+  u.redoStack.length = 0;
+}
+// A different document landed in this tab — old patches must not leak into it.
+function resetPatchUndo(t){
+  if(!t) return;
+  t.undoStack = []; t.redoStack = [];
 }
 /* Whole-document source view (Ctrl+Shift+E): the multi-element escape hatch. */
 async function toggleSourceView(){
@@ -2395,9 +2427,10 @@ function closeSourceView(apply){
   sourceView = null;
   sv.view.destroy(); sv.overlay.remove();
   const changed = src !== sv.orig;
-  // No doc-level undo here: the view's own history died with it, and one
-  // whole-document snapshot per edit would be the memory trap we avoid.
+  // The view's own history died with it; record the whole-document swap as one
+  // patch, so Ctrl+Z / Ctrl+Y walk back and forth across it like any other edit.
   if(apply && changed && tabs.includes(t)){
+    pushFullDocPatch(t, sv.orig, src);
     t.md = src; t.dirty = true; t.edited = true;
     void mdviewAutoSaveDocument(t, true);
     void renderTab(t, true);
@@ -2431,6 +2464,7 @@ $("#editBtn").onclick = () => setEditMode(!editMode);
 
 function setMarkdown(t, md, name, base, source){
   t.md = String(md||"");
+  resetPatchUndo(t); // different document — stale patches must not leak in
   t.name = (name||titleOf(t.md)).slice(0,48);
   if(typeof base === "string") t.base = base;
   if(typeof source === "string"){
@@ -2830,13 +2864,20 @@ $("#theme").onclick = ()=>{
 };
 
 /* ---------- shortcuts ---------- */
+// True when the key event belongs to some editable surface (typed text), so
+// the global shortcuts below never steal keys from an editor or an input.
+function isTextTarget(e){
+  const t = e.target;
+  return !!(t && t.closest && t.closest(".md-cell, .srcview, input, textarea, [contenteditable]"));
+}
 document.addEventListener("keydown", e=>{
   if(e.isComposing) return; // an IME must never see our shortcuts fire mid-composition
   const mod = e.ctrlKey||e.metaKey;
+  const textField = isTextTarget(e);
   if(mod && e.shiftKey && (e.key==="e"||e.key==="E")){ e.preventDefault(); void toggleSourceView(); }
   else if(mod && (e.key==="e"||e.key==="E")){ e.preventDefault(); setEditMode(!editMode); }
-  else if(mod && !sourceView && !activeCell && editMode && !e.shiftKey && (e.key==="z"||e.key==="Z")){ e.preventDefault(); docUndo(); }
-  else if(mod && !sourceView && !activeCell && editMode
+  else if(mod && !sourceView && !activeCell && !textField && editMode && !e.shiftKey && (e.key==="z"||e.key==="Z")){ e.preventDefault(); docUndo(); }
+  else if(mod && !sourceView && !activeCell && !textField && editMode
       && (e.key==="y"||e.key==="Y" || (e.shiftKey && (e.key==="Z"||e.key==="z")))){ e.preventDefault(); docRedo(); }
   if(mod && (e.key==="t"||e.key==="T")){ e.preventDefault(); newTab(); }
   else if(mod && (e.key==="s"||e.key==="S")){ e.preventDefault(); saveCurrent(); }
@@ -2845,10 +2886,10 @@ document.addEventListener("keydown", e=>{
   else if(mod && (e.key==="-"||e.key==="_")){ e.preventDefault(); $("#zout").click(); }
   else if(mod && e.key==="0"){ e.preventDefault(); fontScale=1.0; applyPrefs(); }
   else if(e.key==="F11"){ e.preventDefault(); $("#fs").click(); }
-  else if(e.key==="[" && !mod){ readWidth=Math.max(620,readWidth-40); applyPrefs(); }
-  else if(e.key==="]" && !mod){ readWidth=Math.min(1180,readWidth+40); applyPrefs(); }
-  else if(e.altKey && e.key==="ArrowLeft"){ e.preventDefault(); readWidth=Math.max(620,readWidth-40); applyPrefs(); }
-  else if(e.altKey && e.key==="ArrowRight"){ e.preventDefault(); readWidth=Math.min(1180,readWidth+40); applyPrefs(); }
+  else if(!textField && e.key==="[" && !mod){ readWidth=Math.max(620,readWidth-40); applyPrefs(); }
+  else if(!textField && e.key==="]" && !mod){ readWidth=Math.min(1180,readWidth+40); applyPrefs(); }
+  else if(!textField && e.altKey && e.key==="ArrowLeft"){ e.preventDefault(); readWidth=Math.max(620,readWidth-40); applyPrefs(); }
+  else if(!textField && e.altKey && e.key==="ArrowRight"){ e.preventDefault(); readWidth=Math.min(1180,readWidth+40); applyPrefs(); }
 });
 window.addEventListener("wheel", e=>{
   if(e.ctrlKey){ e.preventDefault(); fontScale=Math.min(2.2,Math.max(0.6,+(fontScale+(e.deltaY<0?0.1:-0.1)).toFixed(2))); applyPrefs(); }
