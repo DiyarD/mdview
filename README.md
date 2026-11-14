@@ -27,6 +27,7 @@ unplugged.
   - [Theme, width and text size](#theme-width-and-text-size)
 - [Saved documents](#saved-documents)
 - [Highlights and notes](#highlights-and-notes)
+- [Editing](#editing)
 - [Printing and PDF](#printing-and-pdf)
 - [Keyboard shortcuts](#keyboard-shortcuts)
 - [Command line](#command-line)
@@ -325,6 +326,50 @@ the file, not in the database blob.
   so the rendered HTML is never rewritten, duplicated or wrapped, and the
   translucent colors composite naturally where highlights overlap.
 
+## Editing
+
+<kbd>Ctrl</kbd>+<kbd>E</kbd> toggles **edit mode**: mdview turns your document
+into a block editor, one click per markdown element. Everything you change
+saves into the internal store — exactly like highlighting does — and the
+files on disk are **never touched**. Edits made to a document opened from
+disk or a URL edit a database copy; the original file/web page stays exactly
+as it was, and a dismissible notice tells you so.
+
+- **Blocks are the unit of editing** — every top-level rendered element
+  (paragraphs, headings, lists, quotes, tables, code blocks, math, footnotes,
+  front matter, thematic breaks, raw HTML blocks) is its own editable block.
+  Click it and its **raw markdown source** opens in place — hash marks,
+  fences, table pipes, all of it — so changing a `#` into `##`, a quote into
+  a list, or any other tag is just typing. The block's rendered form hides
+  while it is being edited.
+- **Zero accidental edits** — reading mode never edits anything. Edit mode
+  fully disables highlighting (annotation creation is inert), a pencil in the
+  toolbar shows the mode at a glance, and <kbd>Ctrl</kbd>+<kbd>E</kbd> toggles
+  back to reading at any time.
+- **Commit is explicit** — like a notebook, not a WYSIWYG. <kbd>Enter</kbd> is
+  a new line; <kbd>Shift</kbd>+<kbd>Enter</kbd> applies and jumps to the next
+  block; <kbd>Alt</kbd>+<kbd>Enter</kbd> applies and opens a fresh paragraph
+  right below it; <kbd>Ctrl</kbd>+<kbd>Enter</kbd> applies and keeps you in
+  the block; <kbd>Esc</kbd> applies and drops back to reading. Emptying a
+  block deletes it — undo recreates it.
+- **Undo that behaves** — inside a block, undo groups by typing with word
+  boundaries (CodeMirror history, 500 ms join window). With the cursor
+  outside any block, <kbd>Ctrl</kbd>+<kbd>Z</kbd> undoes the **last committed
+  edit** as one step, <kbd>Ctrl</kbd>+<kbd>Y</kbd> redoes it — no micro-step
+  spam, no monolithic snapshots (the document keeps a bounded stack of
+  patches, not copies).
+- **Whole document in one go** — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>
+  opens the document as a full source view for cross-block work: reorder
+  sections, fix something everywhere, re-title. <kbd>Esc</kbd> applies.
+- **Save is the same Save** — each applied change auto-saves through the same
+  immediate-flush path highlights use; the document shows its saved state
+  exactly as before.
+- **Closing mid-edit asks first** — with a block (or the source view) holding
+  unapplied text, closing the tab asks: **Cancel / Discard / Save & close**.
+  No silent drops.
+- **CRLF stays CRLF** — a Windows document keeps its line endings byte for
+  byte through edits.
+
 ---
 
 ## Printing and PDF
@@ -372,6 +417,8 @@ tray tooltip always shows the combination that was actually claimed.
 |---|---|
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste — text, a file, a path or a URL |
 | <kbd>Ctrl</kbd>+<kbd>S</kbd> | Save the document into the internal store |
+| <kbd>Ctrl</kbd>+<kbd>E</kbd> | Toggle edit mode |
+| <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd> | Whole-document source view |
 | <kbd>Ctrl</kbd>+<kbd>T</kbd> | New tab |
 | <kbd>Ctrl</kbd>+<kbd>W</kbd> | Close tab |
 | <kbd>Ctrl</kbd>+<kbd>=</kbd> / <kbd>Ctrl</kbd>+<kbd>-</kbd> | Zoom in / out |
@@ -380,7 +427,11 @@ tray tooltip always shows the combination that was actually claimed.
 | <kbd>[</kbd> / <kbd>]</kbd> | Narrower / wider reading area |
 | <kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd> | Narrower / wider reading area |
 | <kbd>F11</kbd> | Borderless fullscreen (native, not CSS) |
-| <kbd>Esc</kbd> | Close the contents menu |
+| <kbd>Esc</kbd> | Apply the edit and close the block / contents menu |
+| <kbd>Shift</kbd>+<kbd>Enter</kbd> | (edit mode) Apply block, edit next |
+| <kbd>Alt</kbd>+<kbd>Enter</kbd> | (edit mode) Apply block, insert paragraph below |
+| <kbd>Ctrl</kbd>+<kbd>Enter</kbd> | (edit mode) Apply, keep editing |
+| <kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd> | Undo / redo (outside a cell: last committed edit) |
 | <kbd>Ctrl</kbd>+<kbd>P</kbd> | Print / Save as PDF (native dialog) |
 
 ---
@@ -431,7 +482,9 @@ mdview does not.
   handler's threads via `block_on`; everything else stays blocking `std` threads.
 - **Renderer libraries are released.** When no open tab contains rendered math or
   a diagram, the inflated KaTeX/Mermaid bundle is dropped, so a long reading
-  session returns to baseline instead of holding ~2.5 MB forever.
+  session returns to baseline instead of holding ~2.5 MB forever. The
+  vendored CodeMirror editor (~172 KB gzipped, loaded only the first time you
+  edit) is released the same way once no block or source view is open.
 - **Hard caps** on paste (4 MB), fetch (3 MB) and served media (100 MB).
 - Release profile is `opt-level="z"` with LTO, one codegen unit, and stripped
   symbols.
@@ -482,7 +535,7 @@ this is **Windows-only as written**.
 ```powershell
 cargo run                                          # debug
 cargo build --release                              # -> target\release\mdview.exe
-cargo test --release                               # 58 tests + 1 fixture test (+ 3 network E2Es, ignored)
+cargo test --release                               # 67 tests + 1 fixture test (+ 3 network E2Es, ignored)
 ```
 
 Remote image fetching links the app against BoringSSL (via `wreq`). That is
@@ -504,6 +557,13 @@ replace one, re-compress it in place:
 python tools/vendor-assets.py
 ```
 
+CodeMirror 6 is the one exception: it is rebuilt from npm (pinned versions)
+and re-bundled:
+
+```powershell
+node tools/vendor-cm6.mjs                            # -> frontend/vendor/codemirror.min.js(.gz)
+```
+
 ---
 
 ## How it works
@@ -522,10 +582,14 @@ python tools/vendor-assets.py
   render · read_file           KaTeX · Mermaid · hljs
   fetch_url · pick_file        remote images (Chrome impersonation,
   clipboard_files · prefs      image/* verified) · local media
+  blocks · save_document       block spans & edits for the editor
   documents → SQLite store     compressed · FTS5 search · SimHash
      │
      ▼
   tab renders → enhance() → highlight → mermaid → katex → TOC
+     │
+     ▼ (edit mode)
+  click → CM6 cell → commit → splice → re-render → auto-save → SQLite
 ```
 
 Markdown is parsed **in Rust**, not in the page. The page receives finished HTML
@@ -597,6 +661,15 @@ Honest list, so nobody has to rediscover these:
   limits the blast radius, but this is not a hardened HTML sanitiser.
 - **Task-list checkboxes are display-only**, so pasted documents stay
   byte-identical to their source.
+- **Editing is source-level, not WYSIWYG.** A block cell shows the block's
+  raw markdown; the rendered form returns when you apply it. Markdown does
+  not round-trip losslessly through HTML, so a live preview is deliberately
+  not what edit mode gives you — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>
+  (source view) and out-of-block <kbd>Ctrl</kbd>+<kbd>Z</kbd> are the escape
+  hatches.
+- **Editing a disk- or URL-sourced document edits a database copy.** mdview
+  never writes back to the original file or page; there is no write-through
+  mode — by design, so a careless hotkey can never modify your files.
 - **Annotations are stored verbatim but not offset-proof against arbitrary
   rewrites.** A highlight survives edits that move or duplicate passages;
   it does not survive its passage being rewritten, and indistinguishable
@@ -639,7 +712,12 @@ verifies the similarity offer swaps
 in the saved document only on explicit **Open saved**. The anchor resolver is exercised
 directly against the edge cases that break naive anchoring: inserted text,
 deleted passages, duplicate quotes with and without distinguishable context,
-emoji offsets, document edges. It exits non-zero if any of that breaks.
+emoji offsets, document edges. The edit suite covers the full notebook flow:
+<kbd>Ctrl</kbd>+<kbd>E</kbd> toggle, click-to-edit blocks, commit and advance,
+<kbd>Alt</kbd>+<kbd>Enter</kbd> insert, block deletion by emptying, undo/redo,
+close-tab confirmation (Cancel / Discard / Save & close), the whole-document
+source view, annotation inertness in edit mode and CRLF round trips. It exits
+non-zero if any of that breaks.
 
 ### Regenerating the screenshots
 
@@ -667,8 +745,9 @@ Other tools:
 | Tool | Purpose |
 |---|---|
 | `tools/page-harness.js` | Shared page assembly + headless-Chrome driver for the browser tools |
-| `tools/test-ui.js` | Behavioral test of the real page: paste → save → rename → search → open → similarity offer → annotate → anchor resolver |
+| `tools/test-ui.js` | Behavioral test of the real page: paste → save → rename → search → open → similarity offer → annotate → anchor resolver → edit mode (blocks, undo, insert, delete, source view) |
 | `tools/vendor-assets.py` | Re-gzip vendored renderer assets in place |
+| `tools/vendor-cm6.mjs` | Rebuild and re-bundle the CodeMirror 6 editor asset |
 | `tools/build-preview.js` | Assemble a standalone `preview-theme.html` for CSS work |
 | `tools/check-syntax.js` | Syntax-check the frontend sources |
 | `tools/browse-pick.ps1` | Drive the real file-open dialog via UI Automation |
