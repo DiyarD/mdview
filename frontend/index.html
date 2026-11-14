@@ -270,12 +270,6 @@
   .srcview .cm-editor{ height:100%; background:var(--card); }
   .srcview .cm-scroller{ height:100%; }
   .srcview .cm-content{ font-family:var(--mono); padding:14px 20px; caret-color:var(--accent); line-height:1.6; }
-  /* The edited-copy notice: a whisper, not a modal. Same family as .similar. */
-  .copy-notice{ display:flex; align-items:center; gap:10px; flex-wrap:wrap;
-    margin:0 0 18px; padding:11px 14px; border:1px solid var(--border);
-    border-radius:10px; background:var(--card); box-shadow:var(--shadow);
-    font:13px/1.45 var(--sans); color:var(--quote); }
-  .copy-notice b{ color:var(--fg); font-weight:600; }
   /* Close-tab confirmation: one purpose, three plain buttons. */
   .confirm{ position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center;
     background:rgba(20,16,12,.45); backdrop-filter:blur(3px); }
@@ -413,7 +407,7 @@
     html{ background:var(--bg); }
     body{ overflow:visible; background:var(--bg); }
     #bar,#toc{ display:none !important; }
-    .md-cell,.srcview,.copy-notice{ display:none !important; }
+    .md-cell,.srcview{ display:none !important; }
     #views{ height:auto; }
     .view{ position:static; overflow:visible; }
     /* The reading margins live in @page now, so .page contributes none —
@@ -2316,7 +2310,6 @@ async function commitCell(reason){
     t.dirty = true;
     t.edited = true;
     void mdviewAutoSaveDocument(t, true); // same door annotations use
-    noteCopyOnFirstEdit(t);
   }
   if(reason === "stay"){ c.orig = src; c.end = c.start + src.length; return t; }
   const keepIndex = c.index;
@@ -2407,26 +2400,8 @@ function closeSourceView(apply){
   if(apply && changed && tabs.includes(t)){
     t.md = src; t.dirty = true; t.edited = true;
     void mdviewAutoSaveDocument(t, true);
-    noteCopyOnFirstEdit(t);
     void renderTab(t, true);
   }
-}
-function noteCopyOnFirstEdit(t){
-  if(t.copyNoticeShown) return;
-  const kind = t.sourceKind;
-  if(kind !== "file" && kind !== "url") return;
-  t.copyNoticeShown = true;
-  const v = document.getElementById("view-" + t.id); if(!v) return;
-  if(v.querySelector(".copy-notice")) return;
-  const what = kind === "file" ? "the original file on disk" : "the original web page";
-  const box = document.createElement("div");
-  box.className = "copy-notice";
-  box.innerHTML = '<span>You’re editing a <b>copy stored in mdview’s database</b> — ' + what + ' is unchanged. Your edits stay inside the app.</span>';
-  const ok = document.createElement("button");
-  ok.type = "button"; ok.className = "btn"; ok.textContent = "Got it";
-  ok.onclick = () => box.remove();
-  box.appendChild(ok);
-  const page = v.querySelector(".page"); if(page) page.prepend(box);
 }
 function askConfirm(){
   return new Promise(resolve => {

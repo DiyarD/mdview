@@ -330,10 +330,11 @@ the file, not in the database blob.
 
 <kbd>Ctrl</kbd>+<kbd>E</kbd> toggles **edit mode**: mdview turns your document
 into a block editor, one click per markdown element. Everything you change
-saves into the internal store — exactly like highlighting does — and the
-files on disk are **never touched**. Edits made to a document opened from
-disk or a URL edit a database copy; the original file/web page stays exactly
-as it was, and a dismissible notice tells you so.
+saves into the internal store — exactly like highlighting does, and through
+the same database pipeline regardless of how the document arrived (paste,
+file path, URL, dropped file, saved document). Nothing in mdview ever writes
+to disk or back to the web: the source you opened stays exactly as it was, and
+the edited version lives in **Saved documents**.
 
 - **Blocks are the unit of editing** — every top-level rendered element
   (paragraphs, headings, lists, quotes, tables, code blocks, math, footnotes,
@@ -667,9 +668,10 @@ Honest list, so nobody has to rediscover these:
   not what edit mode gives you — <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd>
   (source view) and out-of-block <kbd>Ctrl</kbd>+<kbd>Z</kbd> are the escape
   hatches.
-- **Editing a disk- or URL-sourced document edits a database copy.** mdview
-  never writes back to the original file or page; there is no write-through
-  mode — by design, so a careless hotkey can never modify your files.
+- **Editing never writes back to the source.** Whatever the import method,
+  edits are saved to the internal store only; there is no write-through mode —
+  by design, so a careless hotkey can never modify your files or anywhere
+  else on disk.
 - **Annotations are stored verbatim but not offset-proof against arbitrary
   rewrites.** A highlight survives edits that move or duplicate passages;
   it does not survive its passage being rewritten, and indistinguishable
