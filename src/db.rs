@@ -189,6 +189,7 @@ impl Store {
         let store = Store { conn };
         store.configure()?;
         store.conn.execute_batch(SCHEMA)?;
+        store.purge_exact_duplicate_documents()?;
         Ok(store)
     }
 
@@ -475,6 +476,67 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// One-time, idempotent cleanup of rows forked by a historical auto-save
+    /// defect: before `auto_save_document` anchored to the saved document's id,
+    /// every commit inserted a fresh row for what was, to the user, one
+    /// document. Only EXACT duplicates are merged — identical (source_kind,
+    /// source_ref, content_hash, content_size) — which is provably the same
+    /// document at the same state. Same-title-but-different-content rows are
+    /// NEVER touched; there is no reliable way to tell those forks apart from
+    /// distinct documents.
+    ///
+    /// Annotations are re-pointed at the surviving row first, the FTS entry is
+    /// dropped, then the fork is deleted — the merge loses nothing. Which row
+    /// survives is deterministic: most annotations, then newest update, then
+    /// lowest id. Returns the number of forks merged.
+    pub(crate) fn purge_exact_duplicate_documents(&self) -> rusqlite::Result<usize> {
+        let groups = {
+            let mut stmt = self.conn.prepare(
+                "SELECT source_kind, source_ref, content_hash, content_size
+                 FROM documents
+                 GROUP BY source_kind, source_ref, content_hash, content_size
+                 HAVING COUNT(*) > 1",
+            )?;
+            let mapped = stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })?;
+            mapped.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let mut merged = 0usize;
+        for (kind, reference, hash, size) in groups {
+            let members = {
+                let mut stmt = self.conn.prepare(
+                    "SELECT d.id, (SELECT COUNT(*) FROM annotations a WHERE a.document_id = d.id) AS anns, d.updated_at
+                     FROM documents d
+                     WHERE d.source_kind = ?1 AND d.source_ref = ?2 AND d.content_hash = ?3 AND d.content_size = ?4
+                     ORDER BY anns DESC, d.updated_at DESC, d.id ASC",
+                )?;
+                let mapped = stmt.query_map(params![kind, reference, hash, size], |r| {
+                    Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?, r.get::<_, i64>(2)?))
+                })?;
+                mapped.collect::<rusqlite::Result<Vec<_>>>()?
+            };
+            let Some((survivor, _, _)) = members.first() else { continue };
+            let rest: Vec<i64> = members[1..].iter().map(|m| m.0).collect();
+            for id in &rest {
+                self.conn.execute(
+                    "UPDATE annotations SET document_id = ?1 WHERE document_id = ?2",
+                    params![survivor, id],
+                )?;
+                self.conn
+                    .execute("DELETE FROM documents_fts WHERE rowid = ?1", params![id])?;
+                self.conn.execute("DELETE FROM documents WHERE id = ?1", params![id])?;
+                merged += 1;
+            }
+        }
+        Ok(merged)
     }
 
     pub fn recent(&self, limit: usize) -> rusqlite::Result<Vec<RecentDoc>> {
@@ -1251,6 +1313,77 @@ mod tests {
         let b = s.auto_save("Notes", "identical body paste", "", "paste", "").unwrap();
         assert_eq!(a.id, b.id);
         assert_eq!(s.recent(10).unwrap().len(), 1);
+    }
+
+    // The historical fork bug inserted a new row per commit; the purge at DB
+    // open merges exactly-identical forks. It must never touch rows that
+    // differ in content, and must keep whichever fork carries annotations.
+    #[test]
+    fn purge_merges_exact_forks_and_keeps_annotations() {
+        let s = store();
+        let body = "identical fork body";
+        // Simulate two forks of the same document as committed before the fix.
+        let a = s.auto_save("Forked", body, "", "paste", "").unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO documents (title, content_blob, content_size, content_hash, simhash, word_count, preview, base, source_kind, source_ref, created_at, updated_at, opened_at, open_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '', 'paste', '', ?8, ?8, ?8, 0)",
+                params!["Forked", compress(body.as_bytes()), body.len() as i64, fnv1a64(body.as_bytes()) as i64, simhash(body) as i64, word_count(body) as i64, make_preview(body), 1_000_000_i64],
+            )
+            .unwrap();
+        let fork_id = s.conn.last_insert_rowid();
+        // The fresh fork carries an annotation; the purge must re-point it to
+        // the surviving original row, not delete it.
+        s.annotation_add(fork_id, "fork body", "", "", 0, 10, "purple", "keep me").unwrap();
+        // A different content row must never be merged into this group.
+        let _different = s.save(None, "Forked", "different body", "", "paste", "").unwrap();
+        let merged = s.purge_exact_duplicate_documents().unwrap();
+        assert_eq!(merged, 1, "exactly one fork merged");
+        let rows = s.recent(10).unwrap();
+        assert_eq!(rows.len(), 2, "two documents remain: the surviving fork and the different one");
+        // The fork carries one annotation; the survivor rule keeps the
+        // more-annotated row over the older original.
+        let survivor = rows.iter().map(|r| r.id).find(|nid| *nid == fork_id).unwrap();
+        let anns = s.annotation_list(fork_id).unwrap();
+        assert_eq!(anns.len(), 1, "re-pointed annotation survives on the survivor");
+        assert_eq!(anns[0].exact, "fork body");
+        assert_eq!(survivor, fork_id);
+        // FTS has exactly one entry for the surviving row; the original is gone.
+        let fts_count: i64 = s
+            .conn
+            .query_row("SELECT COUNT(*) FROM documents_fts WHERE rowid = ?1", params![fork_id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fts_count, 1);
+        let orig_fts: i64 = s
+            .conn
+            .query_row("SELECT COUNT(*) FROM documents_fts WHERE rowid = ?1", params![a.id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(orig_fts, 0);
+    }
+
+    #[test]
+    fn purge_keeps_the_more_annotated_fork() {
+        // Deterministic survivor choice: most annotations wins, not insertion order.
+        let s = store();
+        let body = "annotated fork body";
+        let a = s.auto_save("Forked", body, "", "paste", "").unwrap();
+        s.conn
+            .execute(
+                "INSERT INTO documents (title, content_blob, content_size, content_hash, simhash, word_count, preview, base, source_kind, source_ref, created_at, updated_at, opened_at, open_count)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, '', 'paste', '', ?8, ?8, ?8, 0)",
+                params!["Forked", compress(body.as_bytes()), body.len() as i64, fnv1a64(body.as_bytes()) as i64, simhash(body) as i64, word_count(body) as i64, make_preview(body), 1_000_000_i64],
+            )
+            .unwrap();
+        let fork_id = s.conn.last_insert_rowid();
+        s.annotation_add(fork_id, "annotated", "", " fork", 0, 9, "yellow", "").unwrap();
+        s.annotation_add(fork_id, "fork body", "", "", 10, 19, "green", "").unwrap();
+        assert_ne!(a.id, fork_id);
+        let merged = s.purge_exact_duplicate_documents().unwrap();
+        assert_eq!(merged, 1);
+        let rows = s.recent(10).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, fork_id, "the more-annotated fork survives");
+        assert_eq!(s.annotation_list(fork_id).unwrap().len(), 2);
     }
 
     #[test]

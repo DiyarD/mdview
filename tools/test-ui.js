@@ -854,6 +854,10 @@ async function main() {
     report("delete_document targets the saved row",
       Array.isArray(sentDelete) && sentDelete.length === 1 && sentDelete[0].doc_id === 1,
       JSON.stringify(sentDelete));
+    // The row must be gone from every open view, not only the one it was
+    // deleted from — otherwise a stale home page would resurrect the entry.
+    report("deleted row is purged from every view, not just the active one",
+      await evalValue(send, "document.querySelectorAll('.saved-item[data-doc-id=\"1\"]').length === 0"));
 
     const failed = results.filter((r) => !r.ok).length;
     console.log("");

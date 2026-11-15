@@ -257,7 +257,17 @@ document never writes to it.
   title hits rank first. <kbd>Enter</kbd> opens the first result.
 - **Delete from the row** — each saved entry carries a ×; the first click arms
   it ("Delete?") and the second confirms. Deleting removes the document and
-  its search entry (annotations cascade with it) and is idempotent.
+  its search entry (annotations cascade with it) and is idempotent, and it
+  disappears from **every** open home screen at once, not just the one you
+  clicked from.
+- **Historical duplicates merged silently** — an older auto-save defect
+  forked rows on every committed edit, so a saved document could accumulate
+  copies. The store now merges exact duplicates (same source, same content,
+  byte-identical) at launch, keeping the row with the most annotations; the
+  fork chain from that defect can no longer occur. Rows that differ in
+  content are left alone — there is no safe way to distinguish them from
+  genuinely distinct documents, and they can be deleted row-by-row from the
+  list.
 - **Same document, noticed** — when any markdown is opened, mdview checks the
   store and, if it looks like something you saved, offers to open the saved
   version instead. The offer is a quiet banner with **Open saved** /
@@ -536,7 +546,7 @@ this is **Windows-only as written**.
 ```powershell
 cargo run                                          # debug
 cargo build --release                              # -> target\release\mdview.exe
-cargo test --release                               # 67 tests + 1 fixture test (+ 3 network E2Es, ignored)
+cargo test --release                               # 69 tests + 1 fixture test (+ 3 network E2Es, ignored)
 ```
 
 Remote image fetching links the app against BoringSSL (via `wreq`). That is

@@ -1011,6 +1011,7 @@ async function loadSavedList(container, query){
       const title = r.title || "untitled";
       const item = document.createElement("div");
       item.className = "saved-item";
+      item.dataset.docId = String(r.id);
       const main = document.createElement("button");
       main.type = "button";
       main.className = "saved-main";
@@ -1066,14 +1067,19 @@ async function confirmDeleteSavedDocument(id, item, container, btn){
     for(const t of tabs){ if(t.savedId === id) t.savedId = null; }
     mdvAnnotationsInvalidateDoc(id); // its annotations cascade away with it
     updateSaveState();
-    item.remove();
-    if(!container.isConnected) return;
-    if(!container.querySelector(".saved-item")){
-      const empty = document.createElement("div");
-      empty.className = "saved-empty";
-      empty.textContent = "No saved documents yet. Save one with Ctrl+S.";
-      container.appendChild(empty);
-    }
+    // The row is gone from the store forever: every open view drops its copy
+    // so no home page keeps (or can reopen) an entry that no longer exists.
+    document.querySelectorAll(".saved-item").forEach(function(el){
+      if(el.dataset.docId === String(id)) el.remove();
+    });
+    document.querySelectorAll(".saved-list").forEach(function(list){
+      if(!list.querySelector(".saved-item") && !list.querySelector(".saved-empty")){
+        const empty = document.createElement("div");
+        empty.className = "saved-empty";
+        empty.textContent = "No saved documents yet. Save one with Ctrl+S.";
+        list.appendChild(empty);
+      }
+    });
   }catch(e){
     showErr(cur()||{id:activeId}, "Could not delete the saved document: " + (e.message||e));
     disarmDeleteSaved(btn);
